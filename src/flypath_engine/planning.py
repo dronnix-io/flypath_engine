@@ -8,7 +8,7 @@ from .profiles import PROFILE_VERSION, drone_profile
 
 
 CONTRACT_VERSION = 1
-ENGINE_VERSION = "0.4.0"
+ENGINE_VERSION = "1.0.0"
 DIRECTION_CONVENTION = "plugin_grid_ccw_from_north"
 MAX_WAYPOINT_LIMIT = 200
 MAX_ROUTE_WAYPOINTS = 40 * (MAX_WAYPOINT_LIMIT - 1) + 1
