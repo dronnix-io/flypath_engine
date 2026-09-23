@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flypath-engine"
+version = "1.0.0"
+description = "Shared mission-planning engine for FlyPath"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+dependencies = [
+  "pyproj>=3.7,<4",
+  "shapely>=2.1,<3",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["flypath_engine"]
+namespaces = false
+
+[tool.setuptools.package-data]
+flypath_engine = ["profiles/*.json"]
