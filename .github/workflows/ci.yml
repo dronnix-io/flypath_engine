@@ -68,8 +68,8 @@ jobs:
           import sys
 
           smoke = (
-              "import importlib.resources, flypath_engine; "
-              "assert flypath_engine.__version__ == '0.4.0'; "
+              "import importlib.metadata, importlib.resources, flypath_engine; "
+              "assert flypath_engine.__version__ == importlib.metadata.version('flypath-engine'); "
               "assert importlib.resources.files('flypath_engine').joinpath('profiles/drones.json').is_file()"
           )
           for artifact in [*glob.glob("dist/*.tar.gz"), *glob.glob("dist/*.whl")]:
@@ -78,5 +78,5 @@ jobs:
           PY
       - uses: actions/upload-artifact@v6
         with:
-          name: flypath-engine-0.4.0
+          name: flypath-engine-dist
           path: dist/*
