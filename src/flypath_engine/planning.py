@@ -8,7 +8,7 @@ from .profiles import PROFILE_VERSION, drone_profile
 
 
 CONTRACT_VERSION = 1
-ENGINE_VERSION = "1.0.0"
+ENGINE_VERSION = "1.0.1"
 DIRECTION_CONVENTION = "plugin_grid_ccw_from_north"
 MAX_WAYPOINT_LIMIT = 200
 MAX_ROUTE_WAYPOINTS = 40 * (MAX_WAYPOINT_LIMIT - 1) + 1
@@ -201,7 +201,7 @@ def plan_2d(request):
             break
     if chosen is None:
         one_waypoint_over = len(points) > waypoint_limit
-        one_time = _segment_seconds(edges, 0, len(points) - 1, speed, capture_mode, photo_allowance)
+        one_time = _flight_estimate(sum(edges), len(points), speed, capture_mode, photo_allowance, None, None)[-1]
         if not split["enabled"]:
             if one_waypoint_over:
                 blocking.append(_issue("splitting_required_waypoint_limit", "Enable splitting to satisfy the waypoint limit."))
@@ -308,6 +308,21 @@ def _edge_distances(points):
     return [route_distance_m(points[index:index + 2]) for index in range(len(points) - 1)]
 
 
+def _flight_estimate(route_distance, waypoint_count, speed, mode, photo_allowance, outbound, recovery):
+    known_distance = route_distance + (outbound or 0) + (recovery or 0)
+    capture_seconds = waypoint_count * photo_allowance if mode == "full_auto" else 0.0
+    startup_seconds = 3.0 if mode == "full_auto" else 0.0
+    return known_distance, capture_seconds, startup_seconds, known_distance / speed + capture_seconds + startup_seconds
+
+
+def _recovery_distance(first, last, finish_action, home):
+    if finish_action == "return_to_first_waypoint":
+        return _distance(last, first)
+    if finish_action == "return_to_home":
+        return _distance(last, home) if home else None
+    return 0.0
+
+
 def _balanced_boundaries(points, edges, count, limit, speed, mode, photo_allowance, budget, finish_action, locations):
     if count < 1 or count > max(1, len(points) - 1):
         return None
@@ -319,10 +334,10 @@ def _balanced_boundaries(points, edges, count, limit, speed, mode, photo_allowan
     first_waypoint_recovery = {}
     for flight_index in range(count):
         location = _flight_location(locations, flight_index)
-        outbound = [_distance(location["launch"], point) / speed
-                    for point in points] if location.get("launch") else [0.0] * n
-        recovery = ([_distance(point, location["home"]) / speed for point in points]
-                    if finish_action == "return_to_home" and location.get("home") else [0.0] * n)
+        outbound = [_distance(location["launch"], point)
+                    for point in points] if location.get("launch") else [None] * n
+        recovery = ([_recovery_distance(None, point, finish_action, location.get("home")) for point in points]
+                    if finish_action != "return_to_first_waypoint" else [None] * n)
         location_costs.append((outbound, recovery))
     current = {0: (0.0, [])}
     for used in range(count):
@@ -335,16 +350,17 @@ def _balanced_boundaries(points, edges, count, limit, speed, mode, photo_allowan
             )
             max_end = min(n - 1 - remaining_groups, start + limit - 1)
             for end in range(min_end, max_end + 1):
-                seconds = (prefix[end] - prefix[start]) / speed
-                if mode == "full_auto":
-                    seconds += (end - start + 1) * photo_allowance + 3
                 outbound, recovery = location_costs[used]
-                seconds += outbound[start] + recovery[end]
+                recovery_distance = recovery[end]
                 if finish_action == "return_to_first_waypoint":
                     pair = (start, end)
                     if pair not in first_waypoint_recovery:
-                        first_waypoint_recovery[pair] = _distance(points[end], points[start]) / speed
-                    seconds += first_waypoint_recovery[pair]
+                        first_waypoint_recovery[pair] = _recovery_distance(points[start], points[end], finish_action, None)
+                    recovery_distance = first_waypoint_recovery[pair]
+                seconds = _flight_estimate(
+                    prefix[end] - prefix[start], end - start + 1, speed, mode,
+                    photo_allowance, outbound[start], recovery_distance,
+                )[-1]
                 if seconds > budget:
                     continue
                 value = (max(worst, seconds), boundaries + [(start, end)])
@@ -356,28 +372,16 @@ def _balanced_boundaries(points, edges, count, limit, speed, mode, photo_allowan
     return current.get(n - 1, (None, None))[1]
 
 
-def _segment_seconds(edges, start, end, speed, mode, photo_allowance):
-    seconds = sum(edges[start:end]) / speed
-    if mode == "full_auto":
-        seconds += (end - start + 1) * photo_allowance + 3
-    return seconds
-
-
 def _flight_result(index, start, end, points, edges, speed, mode, interval, photo_allowance, budget, finish_action, location):
     route_distance = sum(edges[start:end])
     launch = location.get("launch") if location else None
     home = location.get("home") if location else None
     outbound = _distance(launch, points[start]) if launch else None
-    recovery_required = finish_action in ("return_to_home", "return_to_first_waypoint")
-    if finish_action == "return_to_first_waypoint":
-        recovery = _distance(points[end], points[start])
-    else:
-        recovery = _distance(points[end], home) if recovery_required and home else (0.0 if not recovery_required else None)
+    recovery = _recovery_distance(points[start], points[end], finish_action, home)
     complete = outbound is not None and recovery is not None
-    known_distance = route_distance + (outbound or 0) + (recovery or 0)
-    capture_seconds = (end - start + 1) * photo_allowance if mode == "full_auto" else 0.0
-    startup_seconds = 3.0 if mode == "full_auto" else 0.0
-    known_seconds = known_distance / speed + capture_seconds + startup_seconds
+    known_distance, capture_seconds, startup_seconds, known_seconds = _flight_estimate(
+        route_distance, end - start + 1, speed, mode, photo_allowance, outbound, recovery,
+    )
     if mode == "full_auto":
         actions = []
         for waypoint_index in range(start, end + 1):

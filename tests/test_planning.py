@@ -195,6 +195,31 @@ def test_two_flight_boundary_minimizes_the_worst_known_time():
     assert math.isclose(actual, min(legal_worst), abs_tol=1e-9)
 
 
+def test_split_uses_the_same_travel_and_capture_cost_as_flight_results():
+    launch = {"latitude_deg": 51.013, "longitude_deg": -114.027}
+    home = {"latitude_deg": 51.009, "longitude_deg": -114.024}
+    for finish_action in ("return_to_home", "return_to_first_waypoint"):
+        request = _full()
+        request["split"].update(requested_flights=2, max_waypoints_per_flight=200)
+        request["finish_action"] = finish_action
+        request["locations"] = {"shared": {"launch": launch, "home": home}}
+        result = plan_2d(request)
+        points = [waypoint["position"] for waypoint in result["route"]["waypoints"]]
+        allowance = max(2.5, result["capture"]["profile_interval_s"])
+
+        def seconds(start, end):
+            route = route_distance_m(points[start:end + 1])
+            outbound = route_distance_m([launch, points[start]])
+            destination = home if finish_action == "return_to_home" else points[start]
+            recovery = route_distance_m([points[end], destination])
+            return (route + outbound + recovery) / request["speed_m_s"] + (end - start + 1) * allowance + 3
+
+        legal_worst = [max(seconds(0, seam), seconds(seam, len(points) - 1))
+                       for seam in range(1, len(points) - 1)]
+        actual = max(flight["known_estimated_seconds"] for flight in result["flights"])
+        assert math.isclose(actual, min(legal_worst), abs_tol=1e-6)
+
+
 def test_semi_auto_rounds_each_flight_route_and_excludes_home_travel():
     request = _request()
     request["split"]["requested_flights"] = 2

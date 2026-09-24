@@ -1,7 +1,7 @@
 # Calculation rules
 
-These rules are implemented by contract-version-1 `plan_2d` in engine release
-`v0.4.0`.
+These rules are implemented by contract-version-1 `plan_2d` in engine version
+`1.0.1`.
 
 ## Area and distance
 

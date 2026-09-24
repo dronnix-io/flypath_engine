@@ -3,14 +3,15 @@
 Shared Python planning engine used by the FlyPath Django website and QGIS
 plugin. The package contains no Django, QGIS, UI, persistence, or KMZ code.
 
-Release `v0.4.0` adds the versioned `plan_2d(request)` boundary for 2D routes,
+Version `1.0.1` retains the versioned `plan_2d(request)` contract for 2D routes,
 time-balanced flights, explicit capture actions, complete/known estimates,
 warnings, and export validation. The lower-level geometry, measurement,
-statistics, split-helper, and profile APIs remain available.
+statistics, split-helper, and profile interfaces remain available.
 
-The website and plugin adapters consume `v0.4.0`. The plugin vendors the
-pinned release source. See [integration status](docs/integration-status.md)
-for tested behavior and remaining public limits.
+The website and plugin adapters currently consume `v1.0.0`; their `v1.0.1`
+updates are pending. The plugin vendors the pinned release source. See
+[integration status](docs/integration-status.md) for tested behavior and
+remaining public limits.
 
 The package is not published to PyPI. Consumers install the released Git tag
 or pin its commit; CI-built wheel and source archives are validation artifacts.
