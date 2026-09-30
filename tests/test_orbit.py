@@ -102,18 +102,34 @@ def test_direction_controls_the_order_around_the_ring():
     assert 0 < (counter[0] - counter[1]) % 360 < 180
 
 
-def test_semi_auto_closes_the_loop_without_photo_actions():
+def _seam_m(waypoints):
+    first, last = waypoints[0]["position"], waypoints[-1]["position"]
+    return GEOD.inv(last["longitude_deg"], last["latitude_deg"],
+                    first["longitude_deg"], first["latitude_deg"])[2]
+
+
+def test_semi_auto_ends_short_of_the_start_without_photo_actions():
     result = plan_orbit(_request(mode="semi_auto"))
     waypoints = result["route"]["waypoints"]
-    first, last = waypoints[0]["position"], waypoints[-1]["position"]
-    assert abs(first["latitude_deg"] - last["latitude_deg"]) < 1e-9
-    assert abs(first["longitude_deg"] - last["longitude_deg"]) < 1e-9
+    for waypoint in waypoints:
+        assert abs(_distance_and_bearing_to_centre(waypoint)[0] - 40) < 0.01
+    # Two separate waypoints, no further apart than one photo spacing (3 m/s x 2 s).
+    assert 0.5 < _seam_m(waypoints) <= 3 * 2.0 + 1e-6
     actions = result["flights"][0]["actions"]
     assert actions == [{"type": "rotate_camera", "waypoint_index": 0, "pitch_deg": -35}]
     distance = result["statistics"]["route_distance_m"]
-    assert result["statistics"]["photo_count"] == math.floor(distance / (3 * 2.0))
+    assert result["statistics"]["photo_count"] == math.floor(distance / (3 * 2.0)) + 1
     assert result["statistics"]["photo_count_kind"] == "estimate"
     assert 0 <= result["capture"]["side_overlap_ratio"] < 1
+
+
+def test_semi_auto_gap_never_exceeds_a_ring_segment():
+    result = plan_orbit(_request(mode="semi_auto", speed_m_s=12))
+    waypoints = result["route"]["waypoints"]
+    segment = GEOD.inv(waypoints[0]["position"]["longitude_deg"], waypoints[0]["position"]["latitude_deg"],
+                       waypoints[1]["position"]["longitude_deg"], waypoints[1]["position"]["latitude_deg"])[2]
+    assert _seam_m(waypoints) <= segment + 1e-6
+    assert abs(_seam_m(waypoints) - segment) < 0.01    # 24 m photo spacing is wider than a segment
 
 
 def test_waypoint_limit_blocks_export_instead_of_splitting():

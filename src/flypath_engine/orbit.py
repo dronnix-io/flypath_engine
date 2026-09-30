@@ -101,20 +101,23 @@ def plan_orbit(request):
                           minimum=0, maximum=1, maximum_exclusive=True)
         spacing = max(footprint * (1 - overlap), .5)
         count = max(MIN_RING_WAYPOINTS, math.ceil(circumference / spacing))
-        closing = False
+        step = 360.0 / count
+        sweep = step * (count - 1)
     else:
         if "side_overlap_ratio" in capture:
             raise PlanningError("unsupported_feature", "Semi-auto overlap follows speed and the photo interval.",
                                 "capture.side_overlap_ratio")
         count = min(MAX_SEMI_AUTO_WAYPOINTS,
                     max(MIN_RING_WAYPOINTS, math.ceil(circumference / SEMI_AUTO_SEGMENT_M)))
-        closing = True
+        step = 360.0 / count
+        # The ring stops short of the start instead of closing on it. The gap
+        # is no wider than one photo spacing, so the last and first photos
+        # still overlap as much as any other neighbouring pair.
+        seam = min(step, 360.0 * max(speed * interval, .5) / circumference)
+        sweep = 360.0 - seam
 
-    step = 360.0 / count
     sign = 1 if direction == "clockwise" else -1
-    bearings = [start_bearing + sign * step * index for index in range(count)]
-    if closing:
-        bearings.append(start_bearing + sign * 360.0)
+    bearings = [start_bearing + sign * sweep * index / (count - 1) for index in range(count)]
     points, headings = [], []
     for bearing in bearings:
         longitude, latitude, back = _WGS84.fwd(centre["longitude_deg"], centre["latitude_deg"],
@@ -131,7 +134,7 @@ def plan_orbit(request):
     else:
         shot_spacing = max(speed * interval, .5)
         achieved_overlap = max(0.0, 1 - shot_spacing / footprint)
-        photo_count = math.floor(route_distance / shot_spacing)
+        photo_count = math.floor(route_distance / shot_spacing) + 1   # the first shot is at the start
 
     usable_seconds = _number(aircraft.get("battery_safe_min"), "drone_profile.aircraft.battery_safe_min",
                              minimum=0, exclusive=True) * 60
@@ -210,7 +213,7 @@ def plan_orbit(request):
             "direction": direction,
             "start_bearing_deg": start_bearing,
             "slant_distance_m": slant,
-            "angular_step_deg": step,
+            "angular_step_deg": sweep / (count - 1),
         },
         "route": {
             "waypoints": waypoints,
