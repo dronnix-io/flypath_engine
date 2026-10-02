@@ -48,6 +48,7 @@ jobs:
       - run: python tests/test_statistics.py
       - run: python tests/test_profiles.py
       - run: python tests/test_planning.py
+      - run: python tests/test_orbit.py
 
   package:
     runs-on: ubuntu-latest

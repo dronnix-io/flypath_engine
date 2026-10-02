@@ -1,8 +1,9 @@
 """Pure Python mission-planning core shared by FlyPath products."""
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 from .planning import PlanningError, plan_2d
+from .orbit import plan_orbit
 from .route import boustrophedon_route, split_by_waypoint_count, split_waypoints
 
 __all__ = (
@@ -10,6 +11,7 @@ __all__ = (
     "PlanningError",
     "boustrophedon_route",
     "plan_2d",
+    "plan_orbit",
     "split_by_waypoint_count",
     "split_waypoints",
 )
