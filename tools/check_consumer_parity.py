@@ -31,10 +31,12 @@ def compare_exports(website_kmz, plugin_kmz):
             rc = right.find('.//{*}coordinates').text.strip().split(',')[:2]
             assert all(math.isclose(float(x), float(y), abs_tol=1e-8, rel_tol=0)
                        for x, y in zip(lc, rc))
-            for tag in ('actionActuatorFunc', 'waypointTurnMode', 'useStraightLine'):
+            for tag in ('actionActuatorFunc', 'waypointTurnMode', 'useStraightLine',
+                        'waypointHeadingMode', 'waypointHeadingAngleEnable'):
                 assert [e.text for e in left.findall('.//{*}' + tag)] == [
                     e.text for e in right.findall('.//{*}' + tag)], tag
-            for tag in ('hoverTime', 'gimbalPitchRotateAngle', 'waypointSpeed'):
+            for tag in ('hoverTime', 'gimbalPitchRotateAngle', 'waypointSpeed',
+                        'waypointHeadingAngle'):
                 assert [float(e.text) for e in left.findall('.//{*}' + tag)] == [
                     float(e.text) for e in right.findall('.//{*}' + tag)], tag
 
@@ -118,6 +120,47 @@ def main():
                             writers.write_mission(registry.get('DJI Mini 3 Pro'), spec, str(path))
                             compare_exports(website_kmz, path.read_bytes())
                     count += 1
+        # Orbit adapters must preserve the same engine route, overlap, headings,
+        # and actions; the centre is a singleton [latitude, longitude] in sync.
+        for full in (False, True):
+            for reverse in (False, True):
+                altitude, pitch = (30, -35) if full else (10, 0)
+                settings = {
+                    'mapping_style': 'orbit', 'orbit_radius': 40, 'orbit_tilt': pitch,
+                    'altitude': altitude, 'speed': 3, 'side_overlap': 90,
+                    'capture_mode': 'full' if full else 'semi',
+                    'finish_action': 'goHome', 'rc_lost_action': 'goBack',
+                    'flight_path': 'curved', 'reverse_route': reverse,
+                    'split_enabled': False, 'split_max_wp': 200,
+                    'terrain_follow': False, 'cross_hatch': False,
+                }
+                payload = {'drone_model': 'mini3pro', 'settings': settings,
+                           'polygon': [[51.05, -114.09]]}
+                request = adapter.build_orbit_request(
+                    centre=(-114.09, 51.05), drone_profile_id='mini3pro',
+                    radius_m=40, altitude_m=altitude, gimbal_pitch_deg=pitch,
+                    clockwise=not reverse, speed_m_s=3,
+                    capture_mode=settings['capture_mode'], side_overlap_ratio=.9,
+                    finish_action='Return to Home', max_waypoints_per_flight=200)
+                website_result = website_plan(payload)
+                plugin_result = adapter.plan(request)
+                assert website_result['planning_result'] == plugin_result, (full, reverse)
+                validate_saved_plan(request, plugin_result, website_result['waypoints'], payload)
+                content, _, multiple = build_kmz_bundle(dict(
+                    payload, waypoints=website_result['waypoints'],
+                    planning_request=request, planning_result=plugin_result))
+                assert not multiple, 'Orbits are a single flight.'
+                flight = adapter.consume_result(request, plugin_result)[0]
+                with tempfile.TemporaryDirectory(prefix='flypath-orbit-parity-') as directory:
+                    path = Path(directory) / 'orbit.kmz'
+                    spec = writers.MissionSpec(
+                        waypoints=flight['waypoints'], altitude_m=altitude, speed_ms=3,
+                        finish_action='Return to Home', rc_lost_action='Return to Home',
+                        capture_mode=settings['capture_mode'], gimbal_pitch=pitch,
+                        actions=flight['actions'], headings=flight['headings'])
+                    writers.write_mission(registry.get('DJI Mini 3 Pro'), spec, str(path))
+                    compare_exports(content, path.read_bytes())
+                count += 1
     print(f'{count} consumer adapter parity cases passed')
 
 
