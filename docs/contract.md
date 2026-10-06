@@ -86,9 +86,48 @@ contains camera rotation, the first 3-second hover, and photo actions. A seam
 therefore has a photo in both adjacent flights. Missing launch or required
 home travel sets complete totals to `null` while retaining named known totals.
 
+## Orbit request
+
+Engine release `v1.2.0` adds `plan_orbit(request)` for one ring around a centre
+point, for oblique capture of a 3D model. It is an additive operation under
+contract version 1. The request contains:
+
+- `operation: "plan_orbit"` and `mapping_style: "orbit"`
+- contract and drone-profile versions, and `drone_profile_id`
+- `centre` position, `radius_m` (5 to 2,000), and `altitude_m`
+- `gimbal_pitch_deg` (-90 to 0) and `direction` (`clockwise` or
+  `counterclockwise`); optional `start_bearing_deg`, default 0 (north)
+- `speed_m_s` within the profile range, and `finish_action`
+- `capture.mode` `semi_auto` or `full_auto`; full-auto also requires
+  `side_overlap_ratio` between neighbouring photos
+- `split` with `enabled: false` and a waypoint limit
+
+Splitting and terrain following fail as `unsupported_feature`. Unknown fields
+fail as with `plan_2d`.
+
+## Orbit result
+
+The result uses the `plan_2d` shape (route, flights, statistics, capture,
+validation, assumptions, warnings) with these differences:
+
+- `operation`, `mapping_style: "orbit"`, `turn_style: "curved"`, and an `orbit`
+  block echoing the centre, radius, altitude, pitch, direction, start bearing,
+  slant distance, and angular step
+- every route waypoint carries `heading_deg` in (-180, 180], facing the centre
+- one strip and one flight; statistics report the circle area as
+  `survey_area_m2`
+
+Full-auto spaces waypoints by the side overlap of the image width at the slant
+distance, with at least 12 waypoints and a photo action at each one, plus the
+first camera rotation and 3-second hover. Semi-auto places a waypoint about
+every 15 metres of the ring (12 to 72) and contains only the camera rotation.
+The ring stops short of the start by at most one photo spacing, so the first
+and last waypoints are separate. A ring above the waypoint limit or the usable
+battery time returns `validation.export_allowed: false`.
+
 ## Ownership
 
-The shared Python core owns coordinate normalization, direction, 2D route generation, ordering,
+The shared Python core owns coordinate normalization, direction, 2D and orbit route generation, ordering,
 splitting, photo actions, geographic measurements, estimates, and planning
 warnings.
 
