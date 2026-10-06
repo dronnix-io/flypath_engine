@@ -55,3 +55,16 @@ time/distance totals unknown. It does not by itself block export.
 
 Both products consume the same shared-core output, so product-to-product values must
 be identical before display formatting.
+
+## Orbit planning
+
+`plan_orbit` owns the ring geometry, centre-facing waypoint headings,
+direction, camera pitch actions, photo spacing, overlap, distance, time,
+and export limits. Consumers display these values and serialize the returned
+actions and headings. Drawing a map circle does not generate a flight route.
+
+Full-auto places a photo at every ring waypoint and includes the initial
+camera rotation and startup hover. Semi-auto uses the profile capture interval
+and reports estimated photo count and achieved side overlap. The overlap model
+uses image width at the slant distance to the centre at takeoff ground level;
+this assumption is returned in the result. Rings are not split automatically.
