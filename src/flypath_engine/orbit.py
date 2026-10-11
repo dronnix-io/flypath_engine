@@ -6,17 +6,21 @@ photos can feed 3D model generation. Results reuse the plan_2d shape (route,
 flights, statistics, capture, validation) and add a heading per waypoint.
 
 A request can also list up to three rings around the same centre, each with its
-own radius, altitude and camera pitch. They are flown in order as one flight:
-from the last waypoint of a ring straight to the first waypoint of the next.
-A request without ``rings`` is a single ring and keeps the v1.2.0 result shape.
+own radius, altitude and camera pitch. They are flown in order: from the last
+waypoint of a ring straight to the first waypoint of the next. With splitting
+enabled, the route is divided into flights, whole rings first, and a ring is
+only cut into parts when it does not fit one flight on its own. A request
+without ``rings`` and without splitting keeps the v1.2.0 result shape.
 """
 
+import itertools
 import math
 
 from .measurements import _WGS84, route_distance_m
 from .planning import (
     CONTRACT_VERSION, ENGINE_VERSION, MAX_ALTITUDE_M, MAX_WAYPOINT_LIMIT, PlanningError,
-    _ensure_finite_json, _integer, _issue, _keys, _number, _position, _version,
+    _balanced_boundaries, _complete_sum, _ensure_finite_json, _integer, _issue, _keys, _number,
+    _position, _version,
 )
 from .profiles import PROFILE_VERSION, drone_profile
 
@@ -75,9 +79,14 @@ def plan_orbit(request):
     split = request.get("split")
     if not isinstance(split, dict):
         raise PlanningError("invalid_split", "split must be an object.", "split")
-    _keys(split, {"enabled", "max_waypoints_per_flight"}, "split")
-    if split.get("enabled", False) is not False:
-        raise PlanningError("unsupported_feature", "Splitting is not supported for orbit missions.", "split.enabled")
+    _keys(split, {"enabled", "requested_flights", "max_waypoints_per_flight"}, "split")
+    split_enabled = split.get("enabled", False)
+    if type(split_enabled) is not bool:
+        raise PlanningError("invalid_split", "split.enabled must be a boolean.", "split.enabled")
+    requested_flights = _integer(split.get("requested_flights", 1), "split.requested_flights", minimum=1)
+    if not split_enabled and requested_flights != 1:
+        raise PlanningError("invalid_split", "requested_flights needs splitting enabled.",
+                            "split.requested_flights")
     waypoint_limit = _integer(split.get("max_waypoints_per_flight"), "split.max_waypoints_per_flight",
                               minimum=2, maximum=MAX_WAYPOINT_LIMIT)
 
@@ -117,9 +126,10 @@ def plan_orbit(request):
         "speed": speed, "interval": interval, "finish_action": finish_action,
         "waypoint_limit": waypoint_limit, "usable_seconds": usable_seconds,
         "profile_id": profile_id, "profile_name": profile_name,
+        "split_enabled": split_enabled, "requested_flights": requested_flights,
     }
-    if "rings" in request:
-        result = _multi_ring_result(planned, common)
+    if "rings" in request or split_enabled:
+        result = _rings_result(planned, common)
     else:
         result = _single_ring_result(planned[0], common)
     _ensure_finite_json(result)
@@ -191,7 +201,8 @@ def _plan_ring(ring, centre, lens, overlap, speed, interval, start_bearing, sign
     return {
         "radius": radius, "altitude": altitude, "pitch": pitch, "slant": slant,
         "angular_step": sweep / (count - 1), "count": count, "points": points,
-        "headings": headings, "route_distance": route_distance, "shot_spacing": shot_spacing,
+        "headings": headings, "edges": edges, "route_distance": route_distance,
+        "shot_spacing": shot_spacing,
         "overlap": achieved_overlap, "photo_count": photo_count,
     }
 
@@ -214,17 +225,17 @@ def _recovery(first, last, finish_action, height_change=0.0):
     return 0.0
 
 
-def _flight_and_checks(points, actions, route_distance, recovery, photo_count, capture_seconds,
-                       startup_seconds, common):
-    """The single flight record and its blocking checks."""
+def _flight_record(index, start, end, actions, route_distance, recovery, photo_count,
+                   capture_seconds, startup_seconds, common):
+    """One flight over route waypoints start to end, inclusive."""
     known_distance = route_distance + (recovery or 0)
     known_seconds = known_distance / common["speed"] + capture_seconds + startup_seconds
     full_auto = common["mode"] == "full_auto"
-    flight = {
-        "index": 0,
-        "route_start_waypoint_index": 0,
-        "route_end_waypoint_index": len(points) - 1,
-        "waypoint_count": len(points),
+    return {
+        "index": index,
+        "route_start_waypoint_index": start,
+        "route_end_waypoint_index": end,
+        "waypoint_count": end - start + 1,
         "actions": actions,
         "route_distance_m": route_distance,
         "outbound_distance_m": None,
@@ -240,6 +251,14 @@ def _flight_and_checks(points, actions, route_distance, recovery, photo_count, c
         "photo_count": photo_count,
         "photo_count_kind": "actions" if full_auto else "estimate",
     }
+
+
+def _flight_and_checks(points, actions, route_distance, recovery, photo_count, capture_seconds,
+                       startup_seconds, common):
+    """The single-ring flight record and its blocking checks (v1.2.0)."""
+    flight = _flight_record(0, 0, len(points) - 1, actions, route_distance, recovery, photo_count,
+                            capture_seconds, startup_seconds, common)
+    known_seconds = flight["known_estimated_seconds"]
     blocking = []
     if len(points) > common["waypoint_limit"]:
         blocking.append(_issue("waypoint_limit_exceeded",
@@ -249,7 +268,7 @@ def _flight_and_checks(points, actions, route_distance, recovery, photo_count, c
     return flight, blocking
 
 
-def _result(common, orbit, waypoints, strips, flight, blocking, survey_area, capture):
+def _result(common, orbit, waypoints, strips, flights, blocking, survey_area, capture):
     return {
         "contract_version": CONTRACT_VERSION,
         "engine_version": ENGINE_VERSION,
@@ -262,21 +281,21 @@ def _result(common, orbit, waypoints, strips, flight, blocking, survey_area, cap
         "finish_action": common["finish_action"],
         "orbit": orbit,
         "route": {"waypoints": waypoints, "strips": strips},
-        "flights": [flight],
+        "flights": flights,
         "statistics": {
             "survey_area_m2": survey_area,
-            "route_distance_m": flight["route_distance_m"],
+            "route_distance_m": sum(flight["route_distance_m"] for flight in flights),
             "outbound_distance_m": None,
-            "recovery_distance_m": flight["recovery_distance_m"],
-            "known_distance_m": flight["known_distance_m"],
+            "recovery_distance_m": _complete_sum(flight["recovery_distance_m"] for flight in flights),
+            "known_distance_m": sum(flight["known_distance_m"] for flight in flights),
             "total_distance_m": None,
-            "known_estimated_seconds": flight["known_estimated_seconds"],
+            "known_estimated_seconds": sum(flight["known_estimated_seconds"] for flight in flights),
             "total_estimated_seconds": None,
-            "photo_count": flight["photo_count"],
-            "photo_count_kind": flight["photo_count_kind"],
+            "photo_count": sum(flight["photo_count"] for flight in flights),
+            "photo_count_kind": flights[0]["photo_count_kind"],
             "strip_count": len(strips),
-            "waypoint_count": flight["waypoint_count"],
-            "battery_count": 1,
+            "waypoint_count": len(waypoints),
+            "battery_count": len(flights),
             "estimates_complete": False,
         },
         "capture": capture,
@@ -285,7 +304,9 @@ def _result(common, orbit, waypoints, strips, flight, blocking, survey_area, cap
             {"code": "straight_segment_estimate", "message": "Distance and time use straight segments between waypoints."},
             {"code": "unmodeled_operations", "message": "Takeoff, climb, landing, and additional turn delays are not modeled."},
         ],
-        "warnings": [_issue("travel_estimate_incomplete", "Flight 1 is missing launch or recovery location travel.")],
+        "warnings": [_issue("travel_estimate_incomplete",
+                            "Flight %d is missing launch or recovery location travel." % (flight["index"] + 1))
+                     for flight in flights],
         "validation": {"export_allowed": not blocking, "errors": blocking},
     }
 
@@ -324,23 +345,22 @@ def _single_ring_result(ring, common):
         "side_overlap_ratio": ring["overlap"],
     }
     return _result(common, orbit, waypoints, [{"index": 0, "start_waypoint_index": 0, "end_waypoint_index": last}],
-                   flight, blocking, math.pi * ring["radius"] * ring["radius"], capture)
+                   [flight], blocking, math.pi * ring["radius"] * ring["radius"], capture)
 
 
-def _multi_ring_result(rings, common):
-    """Rings flown in order as one flight, each starting at the start bearing."""
+def _rings_result(rings, common):
+    """Rings flown in order, each starting at the start bearing, in one or more flights."""
     full_auto = common["mode"] == "full_auto"
-    waypoints, actions, strips, ring_records = [], [], [], []
-    route_distance = 0.0
+    waypoints, edges, strips, ring_records, ring_of = [], [], [], [], []
     for ring_index, ring in enumerate(rings):
         start = len(waypoints)
         if ring_index:
             # Transition: straight from the previous ring's last waypoint to
             # this ring's first, climbing or descending to its altitude.
             previous = rings[ring_index - 1]
-            route_distance += math.hypot(route_distance_m([previous["points"][-1], ring["points"][0]]),
-                                         ring["altitude"] - previous["altitude"])
-        route_distance += ring["route_distance"]
+            edges.append(math.hypot(route_distance_m([previous["points"][-1], ring["points"][0]]),
+                                    ring["altitude"] - previous["altitude"]))
+        edges.extend(ring["edges"])
         for offset, point in enumerate(ring["points"]):
             roles = {"orbit_point"}
             if offset == 0:
@@ -350,8 +370,8 @@ def _multi_ring_result(rings, common):
             waypoints.append({"index": start + offset, "position": point, "roles": roles,
                               "heading_deg": ring["headings"][offset], "altitude_m": ring["altitude"],
                               "ring_index": ring_index})
+            ring_of.append(ring_index)
         end = len(waypoints) - 1
-        actions += _ring_actions(start, ring, full_auto)
         strips.append({"index": ring_index, "start_waypoint_index": start, "end_waypoint_index": end})
         ring_records.append({
             "index": ring_index, "radius_m": ring["radius"], "altitude_m": ring["altitude"],
@@ -365,20 +385,48 @@ def _multi_ring_result(rings, common):
     for waypoint in waypoints:
         waypoint["roles"] = sorted(waypoint["roles"])
 
-    points = [waypoint["position"] for waypoint in waypoints]
-    recovery = _recovery(points[0], points[-1], common["finish_action"],
-                         rings[-1]["altitude"] - rings[0]["altitude"])
     if full_auto:
-        photo_count = sum(ring["photo_count"] for ring in rings)
         shot_spacing = min(ring["shot_spacing"] for ring in rings)
     else:
         # Interval capture runs for the whole flight, transitions included.
         shot_spacing = rings[0]["shot_spacing"]
-        photo_count = math.floor(route_distance / shot_spacing) + 1
-    capture_seconds = photo_count * max(2.5, common["interval"]) if full_auto else 0.0
-    startup_seconds = STARTUP_WAIT_S * len(rings) if full_auto else 0.0
-    flight, blocking = _flight_and_checks(points, actions, route_distance, recovery, photo_count,
-                                          capture_seconds, startup_seconds, common)
+    route = {"points": [waypoint["position"] for waypoint in waypoints], "edges": edges,
+             "rings": rings, "ring_of": ring_of,
+             "ring_starts": {strip["start_waypoint_index"] for strip in strips},
+             "shot_spacing": shot_spacing}
+
+    blocking = []
+    boundaries = [(0, len(waypoints) - 1)]
+    if common["split_enabled"]:
+        split = _split_boundaries(strips, route, common)
+        if split is None:
+            blocking.append(_issue("flight_cannot_fit",
+                                   "No split fits the waypoint and usable battery-time limits."))
+        else:
+            boundaries = split
+    flights = [_ring_flight(index, start, end, route, common)
+               for index, (start, end) in enumerate(boundaries)]
+    if not common["split_enabled"]:
+        whole = flights[0]
+        if whole["waypoint_count"] > common["waypoint_limit"]:
+            blocking.append(_issue(
+                "splitting_required_waypoint_limit",
+                "The orbit needs %d waypoints, more than the limit of %d. Enable splitting, raise the "
+                "waypoint limit, or lower the overlap." % (whole["waypoint_count"], common["waypoint_limit"])))
+        if whole["known_estimated_seconds"] > common["usable_seconds"]:
+            blocking.append(_issue(
+                "splitting_required_battery_limit",
+                "The orbit needs about %d minutes of flight, more than the %d of one battery. "
+                "Enable splitting." % (math.ceil(whole["known_estimated_seconds"] / 60),
+                                       common["usable_seconds"] // 60)))
+    elif not blocking:
+        for flight in flights:
+            if flight["waypoint_count"] > common["waypoint_limit"]:
+                blocking.append(_issue("waypoint_limit_exceeded",
+                                       "Flight %d exceeds the waypoint limit." % (flight["index"] + 1)))
+            if flight["known_estimated_seconds"] > common["usable_seconds"]:
+                blocking.append(_issue("battery_time_exceeded",
+                                       "Flight %d exceeds the usable battery-time limit." % (flight["index"] + 1)))
     orbit = {
         "centre": common["centre"],
         "direction": common["direction"],
@@ -393,7 +441,107 @@ def _multi_ring_result(rings, common):
         "side_overlap_ratio": min(ring["overlap"] for ring in rings),
     }
     largest = max(ring["radius"] for ring in rings)
-    return _result(common, orbit, waypoints, strips, flight, blocking, math.pi * largest * largest, capture)
+    return _result(common, orbit, waypoints, strips, flights, blocking, math.pi * largest * largest, capture)
+
+
+def _ring_flight(index, start, end, route, common):
+    """One flight over route waypoints start to end.
+
+    The camera tilts to the ring's pitch where the flight starts and where each
+    ring starts; full auto also hovers there and photographs every waypoint."""
+    full_auto = common["mode"] == "full_auto"
+    rings, ring_of, points = route["rings"], route["ring_of"], route["points"]
+    route_distance = sum(route["edges"][start:end])
+    recovery = _recovery(points[start], points[end], common["finish_action"],
+                         rings[ring_of[end]]["altitude"] - rings[ring_of[start]]["altitude"])
+    actions, tilts = [], 0
+    for waypoint_index in range(start, end + 1):
+        if waypoint_index == start or waypoint_index in route["ring_starts"]:
+            tilts += 1
+            actions.append({"type": "rotate_camera", "waypoint_index": waypoint_index,
+                            "pitch_deg": rings[ring_of[waypoint_index]]["pitch"]})
+            if full_auto:
+                actions.append({"type": "hover", "waypoint_index": waypoint_index, "duration_s": STARTUP_WAIT_S})
+        if full_auto:
+            actions.append({"type": "take_photo", "waypoint_index": waypoint_index})
+    if full_auto:
+        photo_count = end - start + 1
+        capture_seconds = photo_count * max(2.5, common["interval"])
+        startup_seconds = STARTUP_WAIT_S * tilts
+    else:
+        photo_count = math.floor(route_distance / route["shot_spacing"]) + 1
+        capture_seconds = startup_seconds = 0.0
+    return _flight_record(index, start, end, actions, route_distance, recovery, photo_count,
+                          capture_seconds, startup_seconds, common)
+
+
+def _split_boundaries(strips, route, common):
+    """Flight boundaries: whole rings grouped where they fit, else rings cut into parts.
+
+    A flight of whole rings starts at a ring's first waypoint. Parts of one
+    ring share their seam waypoint, like plan_2d flights. Returns None when no
+    split fits the waypoint and usable battery-time limits."""
+    limit, budget = common["waypoint_limit"], common["usable_seconds"]
+    requested = common["requested_flights"]
+
+    def longest(boundaries):
+        """The longest flight in seconds, or None when a flight does not fit."""
+        seconds = 0.0
+        for start, end in boundaries:
+            flight = _ring_flight(0, start, end, route, common)
+            if flight["waypoint_count"] > limit or flight["known_estimated_seconds"] > budget:
+                return None
+            seconds = max(seconds, flight["known_estimated_seconds"])
+        return seconds
+
+    rings = len(strips)
+    for count in range(requested, rings + 1):
+        best = None
+        for cuts in itertools.combinations(range(1, rings), count - 1):
+            groups = (0,) + cuts + (rings,)
+            boundaries = [(strips[groups[i]]["start_waypoint_index"],
+                           strips[groups[i + 1] - 1]["end_waypoint_index"]) for i in range(count)]
+            seconds = longest(boundaries)
+            if seconds is not None and (best is None or seconds < best[0] - 1e-9):
+                best = (seconds, boundaries)
+        if best is not None:
+            return best[1]
+
+    # A ring does not fit one flight, or more flights were requested than
+    # there are rings: each ring flies on its own, cut into as few parts as fit.
+    edges = [strip["end_waypoint_index"] - strip["start_waypoint_index"] for strip in strips]
+    if requested > sum(edges):
+        raise PlanningError("too_many_requested_flights",
+                            "requested_flights exceeds the available route edges.", "split.requested_flights")
+    parts = []
+    for strip, ring_edges in zip(strips, edges):
+        for count in range(1, ring_edges + 1):
+            ring_parts = _ring_parts(strip, count, route, common)
+            if ring_parts is not None:
+                parts.append(ring_parts)
+                break
+        else:
+            return None
+    while sum(len(ring_parts) for ring_parts in parts) < requested:
+        # One more part for the ring whose longest flight is longest.
+        _seconds, index = max((longest(ring_parts), index) for index, ring_parts in enumerate(parts)
+                              if len(ring_parts) < edges[index])
+        parts[index] = _ring_parts(strips[index], len(parts[index]) + 1, route, common)
+        if parts[index] is None:
+            return None
+    return [boundary for ring_parts in parts for boundary in ring_parts]
+
+
+def _ring_parts(strip, count, route, common):
+    """One ring cut into count balanced flights that share their seams."""
+    start, end = strip["start_waypoint_index"], strip["end_waypoint_index"]
+    found = _balanced_boundaries(
+        route["points"][start:end + 1], route["edges"][start:end], count, common["waypoint_limit"],
+        common["speed"], common["mode"], max(2.5, common["interval"]), common["usable_seconds"],
+        common["finish_action"], None)
+    if not found:
+        return None
+    return [(start + first, start + last) for first, last in found]
 
 
 def _signed_degrees(value):

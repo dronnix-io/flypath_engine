@@ -100,9 +100,10 @@ contract version 1. The request contains:
 - `speed_m_s` within the profile range, and `finish_action`
 - `capture.mode` `semi_auto` or `full_auto`; full-auto also requires
   `side_overlap_ratio` between neighbouring photos
-- `split` with `enabled: false` and a waypoint limit
+- `split` with `enabled: false` and a waypoint limit (`v1.3.0` adds
+  splitting, see below)
 
-Splitting and terrain following fail as `unsupported_feature`. Unknown fields
+Terrain following fails as `unsupported_feature`. Unknown fields
 fail as with `plan_2d`.
 
 ## Orbit result
@@ -134,8 +135,8 @@ request, still under contract version 1. It replaces the single `radius_m`,
 `altitude_m`, and `gimbal_pitch_deg`. All rings share the centre, direction,
 start bearing, speed, capture settings, finish action, and waypoint limit.
 
-The rings are flown in order as one flight. Each ring starts at the start
-bearing; the route goes straight from the last waypoint of a ring to the first
+The rings are flown in order, as one flight unless the request enables
+splitting. Each ring starts at the start bearing; the route goes straight from the last waypoint of a ring to the first
 waypoint of the next, and that transition counts its climb or descent in the
 distance and time. The result differs from the single-ring shape as follows:
 
@@ -150,10 +151,36 @@ distance and time. The result differs from the single-ring shape as follows:
 - `capture.side_overlap_ratio` reports the lowest ring overlap and full-auto
   `capture.shot_spacing_m` the shortest ring spacing; semi-auto interval photos
   are estimated over the whole flight, transitions included
-- the waypoint and battery limits apply to the whole flight
+- the waypoint and battery limits apply to each flight
 
-A request without `rings` keeps the `v1.2.0` result exactly, so saved
-single-ring orbits still verify.
+A request without `rings` and without splitting keeps the `v1.2.0` result
+exactly, so saved single-ring orbits still verify.
+
+### Splitting orbits
+
+`v1.3.0` also accepts `split.enabled: true` for `plan_orbit`, with the
+optional `split.requested_flights` (default 1) as in `plan_2d`. A split request
+uses the multi-ring result shape, even for one ring. Flights are chosen as
+follows:
+
+- whole rings are grouped into the fewest flights, at least
+  `requested_flights`, that fit the waypoint limit and the usable battery
+  time; among those, the grouping with the shortest longest flight wins
+- a flight of whole rings starts at a ring's first waypoint, so it shares no
+  waypoint with the flight before it
+- when a ring does not fit one flight, or more flights are requested than
+  there are rings, every ring flies on its own and is cut into the fewest
+  balanced parts that fit; parts of one ring share their seam waypoint, as
+  `plan_2d` flights do
+- every flight turns the camera to its ring's pitch at its first waypoint;
+  full-auto adds the 3-second hover there and a photo at every waypoint, so a
+  shared seam has a photo in both flights
+
+Without splitting, a multi-ring route that exceeds the waypoint limit or one
+battery returns `splitting_required_waypoint_limit` or
+`splitting_required_battery_limit`. A split that cannot fit returns
+`flight_cannot_fit`, and more requested flights than route edges fail as
+`too_many_requested_flights`.
 
 ## Ownership
 

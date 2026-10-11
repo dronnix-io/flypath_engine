@@ -140,7 +140,11 @@ def test_waypoint_limit_blocks_export_instead_of_splitting():
 
 
 def test_invalid_requests_are_rejected_with_stable_codes():
-    _error(_request(split={"enabled": True, "max_waypoints_per_flight": 99}), "unsupported_feature", "split.enabled")
+    _error(_request(split={"enabled": "yes", "max_waypoints_per_flight": 99}), "invalid_split", "split.enabled")
+    _error(_request(split={"enabled": False, "requested_flights": 2, "max_waypoints_per_flight": 99}),
+           "invalid_split", "split.requested_flights")
+    _error(_request(split={"enabled": True, "requested_flights": 500, "max_waypoints_per_flight": 99}),
+           "too_many_requested_flights", "split.requested_flights")
     _error(_request(terrain_follow=True), "unsupported_feature", "terrain_follow")
     _error(_request(direction="sideways"), "invalid_direction", "direction")
     _error(_request(radius_m=2), "number_out_of_range", "radius_m")
@@ -269,8 +273,110 @@ def test_ring_waypoints_count_together_against_the_limit():
     result = plan_orbit(_multi(split={"enabled": False, "max_waypoints_per_flight": limit}))
     # Each ring fits on its own; together they exceed the limit.
     assert all(ring["waypoint_count"] < limit for ring in result["orbit"]["rings"])
-    assert "waypoint_limit_exceeded" in [error["code"] for error in result["validation"]["errors"]]
+    error = result["validation"]["errors"][0]
+    assert error["code"] == "splitting_required_waypoint_limit"
+    assert "needs %d waypoints, more than the limit of %d" % (total, limit) in error["message"]
     assert not result["validation"]["export_allowed"]
+
+
+
+def _split(limit, requested=1):
+    return {"enabled": True, "requested_flights": requested, "max_waypoints_per_flight": limit}
+
+
+def _flights(result):
+    return [(f["route_start_waypoint_index"], f["route_end_waypoint_index"]) for f in result["flights"]]
+
+
+def _check_flights(result, limit):
+    """Flights cover the route in order, fit the limit, and set the camera where they start."""
+    waypoints = result["route"]["waypoints"]
+    flights = result["flights"]
+    assert result["validation"]["export_allowed"], result["validation"]
+    assert flights[0]["route_start_waypoint_index"] == 0
+    assert flights[-1]["route_end_waypoint_index"] == len(waypoints) - 1
+    for before, after in zip(flights, flights[1:]):
+        start = after["route_start_waypoint_index"]
+        if "ring_start" in waypoints[start]["roles"]:
+            assert start == before["route_end_waypoint_index"] + 1      # next ring, no shared waypoint
+        else:
+            assert start == before["route_end_waypoint_index"]          # parts of a ring share the seam
+    for flight in flights:
+        assert flight["waypoint_count"] <= limit
+        start = flight["route_start_waypoint_index"]
+        first = flight["actions"][0]
+        ring = result["orbit"]["rings"][waypoints[start]["ring_index"]]
+        assert first == {"type": "rotate_camera", "waypoint_index": start, "pitch_deg": ring["gimbal_pitch_deg"]}
+    assert result["statistics"]["battery_count"] == len(flights)
+    assert result["statistics"]["photo_count"] == sum(f["photo_count"] for f in flights)
+    json.dumps(result)
+
+
+def test_splitting_groups_whole_rings_into_flights():
+    whole = plan_orbit(_multi())
+    counts = [ring["waypoint_count"] for ring in whole["orbit"]["rings"]]
+    limit = sum(counts) - 1                                 # all three rings do not fit together
+    result = plan_orbit(_multi(split=_split(limit)))
+    _check_flights(result, limit)
+    rings = result["orbit"]["rings"]
+    ends = {ring["end_waypoint_index"] for ring in rings}
+    assert len(result["flights"]) == 2
+    assert all(end in ends for _start, end in _flights(result))   # whole rings only
+    # Requesting two flights gives the same, most even, grouping.
+    assert _flights(plan_orbit(_multi(split=_split(limit, requested=2)))) == _flights(result)
+    # Splitting keeps the route; only the flights change.
+    assert result["route"] == whole["route"]
+    assert result["statistics"]["photo_count"] == whole["statistics"]["photo_count"]
+
+
+def test_requested_flights_put_each_ring_in_its_own_flight():
+    result = plan_orbit(_multi(split=_split(200, requested=3)))
+    _check_flights(result, 200)
+    assert _flights(result) == [(ring["start_waypoint_index"], ring["end_waypoint_index"])
+                                for ring in result["orbit"]["rings"]]
+    tilts = [f["actions"][0]["pitch_deg"] for f in result["flights"]]
+    assert tilts == [ring["gimbal_pitch_deg"] for ring in RINGS]
+    # More flights than rings cut the longest ring.
+    four = plan_orbit(_multi(split=_split(200, requested=4)))
+    _check_flights(four, 200)
+    assert len(four["flights"]) == 4
+
+
+def test_a_ring_larger_than_the_limit_is_cut_into_parts_that_share_seams():
+    for mode in ("full_auto", "semi_auto"):
+        result = plan_orbit(_request(mode, split=_split(10)))
+        _check_flights(result, 10)
+        assert len(result["flights"]) >= 2
+        assert len(result["orbit"]["rings"]) == 1          # split results use the rings shape
+        if mode == "full_auto":
+            for flight in result["flights"]:
+                start = flight["route_start_waypoint_index"]
+                assert flight["actions"][1] == {"type": "hover", "waypoint_index": start, "duration_s": 3.0}
+            seams = len(result["flights"]) - 1
+            assert result["statistics"]["photo_count"] == len(result["route"]["waypoints"]) + seams
+        else:
+            assert {a["type"] for f in result["flights"] for a in f["actions"]} == {"rotate_camera"}
+
+
+def test_splitting_follows_the_battery_time_too():
+    slow = _multi(mode="semi_auto", speed_m_s=1,
+                  rings=[dict(ring, radius_m=ring["radius_m"] * 6) for ring in RINGS])
+    unsplit = plan_orbit(slow)
+    codes = [error["code"] for error in unsplit["validation"]["errors"]]
+    assert "splitting_required_battery_limit" in codes
+    result = plan_orbit(dict(slow, split=_split(200)))
+    _check_flights(result, 200)
+    usable = result["flights"][0]["usable_battery_seconds"]
+    assert all(f["known_estimated_seconds"] <= usable for f in result["flights"])
+    assert len(result["flights"]) > 1
+
+
+def test_splitting_that_fits_one_flight_keeps_one_flight():
+    whole = plan_orbit(_multi())
+    result = plan_orbit(_multi(split=_split(200)))
+    assert _flights(result) == [(0, len(whole["route"]["waypoints"]) - 1)]
+    assert result["flights"] == whole["flights"]
+
 
 if __name__ == "__main__":
     tests = [value for name, value in sorted(globals().items()) if name.startswith("test_")]
