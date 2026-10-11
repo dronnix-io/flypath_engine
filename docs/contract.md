@@ -125,6 +125,36 @@ The ring stops short of the start by at most one photo spacing, so the first
 and last waypoints are separate. A ring above the waypoint limit or the usable
 battery time returns `validation.export_allowed: false`.
 
+## Multi-ring orbits
+
+Engine release `v1.3.0` adds an optional `rings` list to the `plan_orbit`
+request, still under contract version 1. It replaces the single `radius_m`,
+`altitude_m`, and `gimbal_pitch_deg` fields (sending both fails as
+`invalid_rings`) and holds 1 to 3 rings, each with its own `radius_m`,
+`altitude_m`, and `gimbal_pitch_deg`. All rings share the centre, direction,
+start bearing, speed, capture settings, finish action, and waypoint limit.
+
+The rings are flown in order as one flight. Each ring starts at the start
+bearing; the route goes straight from the last waypoint of a ring to the first
+waypoint of the next, and that transition counts its climb or descent in the
+distance and time. The result differs from the single-ring shape as follows:
+
+- the `orbit` block holds the centre, direction, start bearing, and a `rings`
+  list with each ring's radius, altitude, pitch, slant distance, angular step,
+  waypoint range, waypoint count, shot spacing, and side overlap
+- every route waypoint also carries its `altitude_m` and `ring_index`; ring
+  boundaries carry the `ring_start` and `ring_end` roles
+- one strip per ring, and `survey_area_m2` uses the largest ring
+- each ring's first waypoint has its own camera rotation; full-auto adds the
+  3-second hover there and a photo at every waypoint
+- `capture.side_overlap_ratio` reports the lowest ring overlap and full-auto
+  `capture.shot_spacing_m` the shortest ring spacing; semi-auto interval photos
+  are estimated over the whole flight, transitions included
+- the waypoint and battery limits apply to the whole flight
+
+A request without `rings` keeps the `v1.2.0` result exactly, so saved
+single-ring orbits still verify.
+
 ## Ownership
 
 The shared Python core owns coordinate normalization, direction, 2D and orbit route generation, ordering,
