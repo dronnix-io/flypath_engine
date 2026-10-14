@@ -5,11 +5,14 @@ plugin. The package contains no Django, QGIS, UI, persistence, or KMZ code.
 
 Release `v0.4.0` adds the versioned `plan_2d(request)` boundary for 2D routes,
 time-balanced flights, explicit capture actions, complete/known estimates,
-warnings, and export validation. The lower-level geometry, measurement,
-statistics, split-helper, and profile APIs remain available.
+warnings, and export validation. Release `v1.2.0` adds `plan_orbit(request)`
+for a ring of centre-facing waypoints around an object, and `v1.3.0` adds up to
+three rings per orbit and orbit splitting into flights. The lower-level
+geometry, measurement, statistics, split-helper, and profile APIs remain
+available.
 
-The website and plugin adapters consume `v0.4.0`. The plugin vendors the
-pinned release source. See [integration status](docs/integration-status.md)
+The website and plugin adapters consume the released engine; the plugin vendors
+the pinned release source. See [integration status](docs/integration-status.md)
 for tested behavior and remaining public limits.
 
 The package is not published to PyPI. Consumers install the released Git tag

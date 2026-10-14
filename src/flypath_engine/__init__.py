@@ -1,6 +1,6 @@
 """Pure Python mission-planning core shared by FlyPath products."""
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 from .planning import PlanningError, plan_2d
 from .orbit import plan_orbit

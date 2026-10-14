@@ -9,8 +9,14 @@ The `v1.2.0` candidate adds `plan_orbit` under contract version 1. Both
 consumer adapters use its ring, centre-facing headings, capture actions,
 overlap, and statistics. Candidate integration adds orbit mission persistence
 and synchronization, with one centre point plus radius and camera tilt.
-The normal plugin build still requires the public v1.2.0 tag at its pinned
-commit before release.
+
+Release `v1.3.0` adds up to three rings per orbit, each with its own radius,
+altitude, and camera tilt, and orbit splitting into flights, whole rings
+first. A request without rings and without splitting keeps the `v1.2.0`
+result exactly. The QGIS plugin plans and exports multi-ring and split orbits;
+mission synchronization still carries one ring flown as one flight, so the
+website side of rings and splitting remains to be added. The plugin build
+requires the public v1.3.0 tag at its pinned commit before release.
 
 ## Public integration
 
