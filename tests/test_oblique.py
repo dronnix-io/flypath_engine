@@ -197,6 +197,7 @@ def test_deterministic():
     ({"mapping_style": "2d"}, "unsupported_feature", "mapping_style"),
     ({"operation": "plan_2d"}, "unsupported_operation", "operation"),
     ({"cross_hatch": True}, "unknown_field", "request.cross_hatch"),
+    ({"reverse_route": 1}, "invalid_boolean", "reverse_route"),
     ({"locations": {"per_flight": [{}]}}, "unsupported_feature", "locations.per_flight"),
 ])
 def test_invalid_requests_fail(overrides, code, field):
@@ -245,3 +246,16 @@ def test_full_is_the_default_pattern_and_others_fail():
     with pytest.raises(PlanningError) as error:
         plan_oblique(_request(pattern="smart"))
     assert (error.value.code, error.value.field) == ("invalid_pattern", "pattern")
+
+
+@pytest.mark.parametrize("pattern", ["full", "fast"])
+def test_reverse_route_flies_each_pass_from_its_other_end(pattern):
+    forward = plan_oblique(_request(pattern=pattern))
+    reverse = plan_oblique(_request(pattern=pattern, reverse_route=True))
+    assert reverse["oblique"]["reverse_route"] is True
+    assert [p["kind"] for p in reverse["oblique"]["passes"]] == [p["kind"] for p in forward["oblique"]["passes"]]
+    for ahead, back in zip(forward["oblique"]["passes"], reverse["oblique"]["passes"]):
+        assert _pass_points(reverse, back) == list(reversed(_pass_points(forward, ahead)))
+        assert back["heading_deg"] == ahead["heading_deg"]
+    assert reverse["statistics"]["waypoint_count"] == forward["statistics"]["waypoint_count"]
+    assert reverse["validation"]["export_allowed"] is True

@@ -192,7 +192,9 @@ of an area, for 3D models. It is an additive operation under contract version
 - `gimbal_pitch_deg` (-85 to -20), the camera pitch of the oblique passes
 - optional `include_nadir`, default `true`, to fly a nadir pass first
 - optional `pattern`, `full` (default) or `fast`
-- no `cross_hatch` or `reverse_route`; per-flight `locations` and terrain
+- optional `reverse_route`, default `false`, to fly every pass from its other
+  end; the pass order stays the same
+- no `cross_hatch`; per-flight `locations` and terrain
   following fail as `unsupported_feature`
 
 ## Oblique result

@@ -61,7 +61,8 @@ def plan_oblique(request):
     _keys(request, {
         "contract_version", "operation", "source_mission_id", "mapping_style", "survey_area",
         "drone_profile_id", "profile_version", "altitude_m", "speed_m_s", "side_overlap_ratio",
-        "margin_m", "direction", "capture", "gimbal_pitch_deg", "include_nadir", "pattern", "turn_style",
+        "margin_m", "direction", "capture", "gimbal_pitch_deg", "include_nadir", "pattern", "reverse_route",
+        "turn_style",
         "finish_action", "split", "locations", "terrain_follow",
     }, "request")
     if request.get("operation", "plan_oblique") != "plan_oblique":
@@ -93,6 +94,9 @@ def plan_oblique(request):
     include_nadir = request.get("include_nadir", True)
     if type(include_nadir) is not bool:
         raise PlanningError("invalid_boolean", "Value must be a boolean.", "include_nadir")
+    reverse_route = request.get("reverse_route", False)
+    if type(reverse_route) is not bool:
+        raise PlanningError("invalid_boolean", "Value must be a boolean.", "reverse_route")
     pattern = request.get("pattern", "full")
     if pattern not in PATTERNS:
         raise PlanningError("invalid_pattern", "Pattern must be full or fast.", "pattern")
@@ -174,6 +178,9 @@ def plan_oblique(request):
         raise PlanningError("capacity_exceeded", "Planned route exceeds the engine waypoint capacity.",
                             "survey_area")
 
+    if reverse_route:
+        for survey_pass in passes:
+            _reverse_pass(survey_pass)
     waypoints, strips, points = _route(passes)
     edges = _edge_distances(points)
     usable_seconds = _number(aircraft.get("battery_safe_min"), "drone_profile.aircraft.battery_safe_min",
@@ -241,6 +248,7 @@ def plan_oblique(request):
             "gimbal_pitch_deg": pitch,
             "include_nadir": include_nadir,
             "pattern": pattern,
+            "reverse_route": reverse_route,
             "slant_distance_m": slant,
             "offset_m": offset,
             "passes": [_pass_record(survey_pass) for survey_pass in passes],
@@ -337,6 +345,17 @@ def _plan_passes(survey_area, direction, altitude, slant, offset, pitch, include
             "line_spacing": generated["line_spacing_m"], "shot_spacing": shot_spacing,
         })
     return passes
+
+
+def _reverse_pass(survey_pass):
+    """Fly a pass from its other end; the pass order stays the same."""
+    last = len(survey_pass["points"]) - 1
+    survey_pass["points"].reverse()
+    survey_pass["strips"] = [
+        {**strip, "index": index, "start_waypoint_index": last - strip["end_waypoint_index"],
+         "end_waypoint_index": last - strip["start_waypoint_index"]}
+        for index, strip in enumerate(reversed(survey_pass["strips"]))
+    ]
 
 
 def _route(passes):
