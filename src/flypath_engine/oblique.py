@@ -1,15 +1,22 @@
 """Versioned oblique planning: grid passes with a tilted camera for 3D models.
 
-The survey area is flown as up to five grid passes. An optional nadir pass looks
-straight down, like plan_2d. Four oblique passes tilt the camera to the
-requested pitch and face it one way each: along the flight lines, to their
-right, back along them, and to their left. The drone holds that heading for the
-whole pass, so it flies some lines backwards or sideways.
+The survey area is flown as grid passes with the camera tilted to the requested
+pitch, after an optional nadir pass that looks straight down like plan_2d. Two
+patterns are offered:
 
-Each oblique pass is moved away from the area, against the way the camera
-faces, by altitude / tan(|pitch|): the centre of every photo then lands inside
-the area, so its edges are seen from all four sides without flying far past
-them. Line and photo spacing use the slant distance to the ground at the photo
+- ``full``: four oblique passes, each facing one way: along the flight lines,
+  to their right, back along them, and to their left. The drone holds that
+  heading for the whole pass, so it flies some lines backwards or sideways.
+  Each pass is moved away from the area, against the way the camera faces, by
+  altitude / tan(|pitch|): the centre of every photo then lands inside the
+  area, so its edges are seen from all four sides without flying far past them.
+- ``fast``: two crossing grids with the drone facing along its lines, as in
+  plan_2d. Neighbouring lines run opposite ways, so each grid photographs two
+  opposite sides and the pair covers all four in half the passes. Each line is
+  extended by the same offset at both ends so the photo centres reach the
+  area's edges in both directions.
+
+Line and photo spacing use the slant distance to the ground at the photo
 centre, which keeps the overlap at least as high as requested.
 
 Every pass flies as its own flights; a flight never spans two passes. Results
@@ -20,6 +27,7 @@ waypoint.
 import math
 
 from shapely import affinity
+from shapely.ops import unary_union
 
 from . import grid
 from .measurements import _WGS84, survey_area_m2
@@ -41,6 +49,9 @@ FINISH_ACTIONS = ("return_to_home", "return_to_first_waypoint", "hover", "land")
 # Names of the oblique passes, by the side the camera faces relative to the
 # flight lines' bearing.
 LOOKS = ("forward", "right", "back", "left")
+PATTERNS = ("full", "fast")
+# Steps used to stretch the area along the flight lines for the fast pattern.
+STRETCH_STEPS = 8
 
 
 def plan_oblique(request):
@@ -50,7 +61,7 @@ def plan_oblique(request):
     _keys(request, {
         "contract_version", "operation", "source_mission_id", "mapping_style", "survey_area",
         "drone_profile_id", "profile_version", "altitude_m", "speed_m_s", "side_overlap_ratio",
-        "margin_m", "direction", "capture", "gimbal_pitch_deg", "include_nadir", "turn_style",
+        "margin_m", "direction", "capture", "gimbal_pitch_deg", "include_nadir", "pattern", "turn_style",
         "finish_action", "split", "locations", "terrain_follow",
     }, "request")
     if request.get("operation", "plan_oblique") != "plan_oblique":
@@ -82,6 +93,9 @@ def plan_oblique(request):
     include_nadir = request.get("include_nadir", True)
     if type(include_nadir) is not bool:
         raise PlanningError("invalid_boolean", "Value must be a boolean.", "include_nadir")
+    pattern = request.get("pattern", "full")
+    if pattern not in PATTERNS:
+        raise PlanningError("invalid_pattern", "Pattern must be full or fast.", "pattern")
 
     capture = request.get("capture")
     if not isinstance(capture, dict) or capture.get("mode") not in ("semi_auto", "full_auto"):
@@ -149,7 +163,7 @@ def plan_oblique(request):
     offset = altitude * math.tan(tilt)
 
     try:
-        passes = _plan_passes(survey_area, resolved_direction, altitude, slant, offset, pitch, include_nadir,
+        passes = _plan_passes(survey_area, resolved_direction, altitude, slant, offset, pitch, include_nadir, pattern,
                               lens, camera, side_overlap, front_overlap, speed, interval, margin, mode)
         area = survey_area_m2(survey_area)
     except grid.GridCapacityError as exc:
@@ -226,6 +240,7 @@ def plan_oblique(request):
         "oblique": {
             "gimbal_pitch_deg": pitch,
             "include_nadir": include_nadir,
+            "pattern": pattern,
             "slant_distance_m": slant,
             "offset_m": offset,
             "passes": [_pass_record(survey_pass) for survey_pass in passes],
@@ -271,9 +286,9 @@ def plan_oblique(request):
     return result
 
 
-def _plan_passes(survey_area, direction, altitude, slant, offset, pitch, include_nadir, lens, camera,
+def _plan_passes(survey_area, direction, altitude, slant, offset, pitch, include_nadir, pattern, lens, camera,
                  side_overlap, front_overlap, speed, interval, margin, mode):
-    """The grid of every pass: nadir first when included, then the four looks."""
+    """The grid of every pass: nadir first when included, then the oblique ones."""
     # Flight lines run along this grid bearing (clockwise from grid north); the
     # engine's direction convention is counterclockwise.
     line_bearing = (-direction) % 360
@@ -281,7 +296,16 @@ def _plan_passes(survey_area, direction, altitude, slant, offset, pitch, include
     if include_nadir:
         plans.append({"kind": "nadir", "look": None, "area": survey_area, "pitch": NADIR_PITCH_DEG,
                       "direction": direction, "distance": altitude})
-    for index, look in enumerate(LOOKS):
+    for index, kind in enumerate(("grid", "cross_grid") if pattern == "fast" else ()):
+        # The drone faces along its lines; each line reaches past the area by
+        # the offset at both ends, where the camera looks back at the edge.
+        grid_direction = direction if index == 0 else (direction + 90) % 180
+        plans.append({
+            "kind": kind, "look": None, "pitch": pitch, "direction": grid_direction,
+            "area": _stretched_area(survey_area, (-grid_direction) % 360, offset),
+            "distance": slant,
+        })
+    for index, look in enumerate(LOOKS if pattern == "full" else ()):
         bearing = (line_bearing + 90 * index) % 360
         plans.append({
             "kind": look, "look": bearing, "pitch": pitch,
@@ -398,7 +422,22 @@ def _shifted_area(survey_area, bearing_deg, distance_m):
     metric, inverse = grid._metric_polygon(survey_area)
     angle = math.radians(bearing_deg)
     moved = affinity.translate(metric, xoff=distance_m * math.sin(angle), yoff=distance_m * math.cos(angle))
-    polygons = list(moved.geoms) if moved.geom_type == "MultiPolygon" else [moved]
+    return _survey_area(moved, inverse)
+
+
+def _stretched_area(survey_area, bearing_deg, distance_m):
+    """The survey area swept distance_m both ways along a grid bearing."""
+    metric, inverse = grid._metric_polygon(survey_area)
+    angle = math.radians(bearing_deg)
+    copies = [affinity.translate(metric, xoff=distance_m * step / STRETCH_STEPS * math.sin(angle),
+                                 yoff=distance_m * step / STRETCH_STEPS * math.cos(angle))
+              for step in range(-STRETCH_STEPS, STRETCH_STEPS + 1)]
+    return _survey_area(unary_union(copies).buffer(0), inverse)
+
+
+def _survey_area(geometry, inverse):
+    """A metric polygon or multipolygon as a WGS84 survey area."""
+    polygons = list(geometry.geoms) if geometry.geom_type == "MultiPolygon" else [geometry]
     parts = [{"exterior": _wgs84_ring(polygon.exterior.coords, inverse),
               "holes": [_wgs84_ring(ring.coords, inverse) for ring in polygon.interiors]}
              for polygon in polygons]

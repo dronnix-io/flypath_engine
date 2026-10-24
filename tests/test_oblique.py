@@ -203,3 +203,45 @@ def test_invalid_requests_fail(overrides, code, field):
     with pytest.raises(PlanningError) as error:
         plan_oblique(_request(**overrides))
     assert (error.value.code, error.value.field) == (code, field)
+
+
+def test_fast_pattern_flies_two_crossing_grids_facing_along_the_lines():
+    result = plan_oblique(_request(pattern="fast", include_nadir=False))
+    oblique = result["oblique"]
+    assert oblique["pattern"] == "fast"
+    passes = oblique["passes"]
+    assert [p["kind"] for p in passes] == ["grid", "cross_grid"]
+    assert (passes[1]["grid_direction_deg"] - passes[0]["grid_direction_deg"]) % 180 == 90
+    assert all(p["heading_deg"] is None and p["look_bearing_deg"] is None for p in passes)
+    assert all(row["heading_deg"] is None for row in result["route"]["waypoints"])
+    for flight in result["flights"]:
+        assert flight["actions"][0]["pitch_deg"] == -45
+    assert result["validation"]["export_allowed"] is True
+
+
+def test_fast_pattern_lines_reach_past_the_area_by_the_offset():
+    # Direction 0 flies north-south lines, so the grid reaches past the area
+    # to the north and south by about the offset, not to the east and west.
+    result = plan_oblique(_request(pattern="fast", include_nadir=False))
+    grid = result["oblique"]["passes"][0]
+    latitudes = [point["latitude_deg"] for point in _pass_points(result, grid)]
+    south = GEOD.inv(-114.0885, min(latitudes), -114.0885, 51.05)[2]
+    north = GEOD.inv(-114.0885, 51.0515, -114.0885, max(latitudes))[2]
+    offset = result["oblique"]["offset_m"]
+    assert south == pytest.approx(offset, abs=10) and north == pytest.approx(offset, abs=10)
+
+
+def test_fast_pattern_takes_less_flying_than_full():
+    assert [p["kind"] for p in plan_oblique(_request(pattern="fast"))["oblique"]["passes"]] == [
+        "nadir", "grid", "cross_grid"]
+    fast = plan_oblique(_request(pattern="fast", include_nadir=False))
+    full = plan_oblique(_request(pattern="full", include_nadir=False))
+    assert fast["statistics"]["known_distance_m"] < .8 * full["statistics"]["known_distance_m"]
+    assert fast["statistics"]["photo_count"] < full["statistics"]["photo_count"]
+
+
+def test_full_is_the_default_pattern_and_others_fail():
+    assert plan_oblique(_request())["oblique"]["pattern"] == "full"
+    with pytest.raises(PlanningError) as error:
+        plan_oblique(_request(pattern="smart"))
+    assert (error.value.code, error.value.field) == ("invalid_pattern", "pattern")
