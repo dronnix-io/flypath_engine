@@ -50,6 +50,8 @@ FINISH_ACTIONS = ("return_to_home", "return_to_first_waypoint", "hover", "land")
 # flight lines' bearing.
 LOOKS = ("forward", "right", "back", "left")
 PATTERNS = ("full", "fast")
+MIN_DENSIFY_M = 5
+MAX_DENSIFY_M = 500
 # Steps used to stretch the area along the flight lines for the fast pattern.
 STRETCH_STEPS = 8
 
@@ -62,7 +64,7 @@ def plan_oblique(request):
         "contract_version", "operation", "source_mission_id", "mapping_style", "survey_area",
         "drone_profile_id", "profile_version", "altitude_m", "speed_m_s", "side_overlap_ratio",
         "margin_m", "direction", "capture", "gimbal_pitch_deg", "include_nadir", "pattern", "reverse_route",
-        "turn_style",
+        "densify_m", "turn_style",
         "finish_action", "split", "locations", "terrain_follow",
     }, "request")
     if request.get("operation", "plan_oblique") != "plan_oblique":
@@ -116,6 +118,15 @@ def plan_oblique(request):
     if mode == "full_auto":
         front_overlap = _number(capture.get("front_overlap_ratio"), "capture.front_overlap_ratio",
                                 minimum=0, maximum=1, maximum_exclusive=True)
+    # Semi-auto lines can carry a waypoint at least every densify_m, so a
+    # consumer can set each one's height (terrain follow). Full auto already
+    # has a waypoint at every photo.
+    densify_m = None
+    if "densify_m" in request:
+        if mode == "full_auto":
+            raise PlanningError("unsupported_feature", "Full-auto lines already have a waypoint at every photo.",
+                                "densify_m")
+        densify_m = _number(request["densify_m"], "densify_m", minimum=MIN_DENSIFY_M, maximum=MAX_DENSIFY_M)
 
     split = request.get("split")
     if not isinstance(split, dict) or type(split.get("enabled")) is not bool:
@@ -168,7 +179,7 @@ def plan_oblique(request):
 
     try:
         passes = _plan_passes(survey_area, resolved_direction, altitude, slant, offset, pitch, include_nadir, pattern,
-                              lens, camera, side_overlap, front_overlap, speed, interval, margin, mode)
+                              lens, camera, side_overlap, front_overlap, speed, interval, margin, mode, densify_m)
         area = survey_area_m2(survey_area)
     except grid.GridCapacityError as exc:
         raise PlanningError("capacity_exceeded", str(exc), "survey_area") from None
@@ -249,6 +260,7 @@ def plan_oblique(request):
             "include_nadir": include_nadir,
             "pattern": pattern,
             "reverse_route": reverse_route,
+            "densify_m": densify_m,
             "slant_distance_m": slant,
             "offset_m": offset,
             "passes": [_pass_record(survey_pass) for survey_pass in passes],
@@ -295,7 +307,7 @@ def plan_oblique(request):
 
 
 def _plan_passes(survey_area, direction, altitude, slant, offset, pitch, include_nadir, pattern, lens, camera,
-                 side_overlap, front_overlap, speed, interval, margin, mode):
+                 side_overlap, front_overlap, speed, interval, margin, mode, densify_m=None):
     """The grid of every pass: nadir first when included, then the oblique ones."""
     # Flight lines run along this grid bearing (clockwise from grid north); the
     # engine's direction convention is counterclockwise.
@@ -331,7 +343,7 @@ def _plan_passes(survey_area, direction, altitude, slant, offset, pitch, include
             densify = shot_spacing
         else:
             shot_spacing = max(speed * interval, .5)
-            densify = None
+            densify = densify_m
         generated = grid.generate_grid(
             plan["area"], altitude_m=plan["distance"], shot_spacing_m=shot_spacing,
             side_overlap=side_overlap, direction_deg=plan["direction"], margin_m=margin,

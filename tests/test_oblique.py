@@ -198,6 +198,7 @@ def test_deterministic():
     ({"operation": "plan_2d"}, "unsupported_operation", "operation"),
     ({"cross_hatch": True}, "unknown_field", "request.cross_hatch"),
     ({"reverse_route": 1}, "invalid_boolean", "reverse_route"),
+    ({"densify_m": 25}, "unsupported_feature", "densify_m"),
     ({"locations": {"per_flight": [{}]}}, "unsupported_feature", "locations.per_flight"),
 ])
 def test_invalid_requests_fail(overrides, code, field):
@@ -259,3 +260,21 @@ def test_reverse_route_flies_each_pass_from_its_other_end(pattern):
         assert back["heading_deg"] == ahead["heading_deg"]
     assert reverse["statistics"]["waypoint_count"] == forward["statistics"]["waypoint_count"]
     assert reverse["validation"]["export_allowed"] is True
+
+
+def test_semi_auto_densify_adds_line_waypoints_for_terrain_heights():
+    plain = plan_oblique(_request("semi_auto", pattern="fast"))
+    dense = plan_oblique(_request("semi_auto", pattern="fast", densify_m=25))
+    assert dense["oblique"]["densify_m"] == 25
+    assert dense["statistics"]["waypoint_count"] > 2 * plain["statistics"]["waypoint_count"]
+    rows = dense["route"]["waypoints"]
+    for strip in dense["route"]["strips"]:
+        line = [row["position"] for row in rows[strip["start_waypoint_index"]:strip["end_waypoint_index"] + 1]]
+        steps = [GEOD.inv(a["longitude_deg"], a["latitude_deg"], b["longitude_deg"], b["latitude_deg"])[2]
+                 for a, b in zip(line, line[1:])]
+        assert max(steps) <= 25 + 1e-6
+    # Same lines, so about the same distance and interval photos.
+    assert dense["statistics"]["route_distance_m"] == pytest.approx(plain["statistics"]["route_distance_m"], rel=.01)
+    with pytest.raises(PlanningError) as error:
+        plan_oblique(_request("semi_auto", densify_m=2))
+    assert error.value.field == "densify_m"
