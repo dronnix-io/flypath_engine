@@ -194,9 +194,6 @@ of an area, for 3D models. It is an additive operation under contract version
 - optional `pattern`, `full` (default) or `fast`
 - optional `reverse_route`, default `false`, to fly every pass from its other
   end; the pass order stays the same
-- optional `densify_m` (5 to 500), semi-auto only: every flight line gets a
-  waypoint at least this often, so a consumer can set each waypoint's height
-  for terrain following. Full-auto already has a waypoint at every photo
 - no `cross_hatch`; per-flight `locations` and terrain
   following fail as `unsupported_feature`
 
