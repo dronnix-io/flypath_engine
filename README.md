@@ -7,7 +7,10 @@ Release `v0.4.0` adds the versioned `plan_2d(request)` boundary for 2D routes,
 time-balanced flights, explicit capture actions, complete/known estimates,
 warnings, and export validation. Release `v1.2.0` adds `plan_orbit(request)`
 for a ring of centre-facing waypoints around an object, and `v1.3.0` adds up to
-three rings per orbit and orbit splitting into flights. The lower-level
+three rings per orbit and orbit splitting into flights. Release `v1.4.0` adds
+`plan_oblique(request)` for oblique photography of an area: an optional nadir
+pass plus four grid passes with a tilted camera, one facing each side. The
+lower-level
 geometry, measurement, statistics, split-helper, and profile APIs remain
 available.
 

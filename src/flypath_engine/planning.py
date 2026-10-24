@@ -8,7 +8,7 @@ from .profiles import PROFILE_VERSION, drone_profile
 
 
 CONTRACT_VERSION = 1
-ENGINE_VERSION = "1.3.0"
+ENGINE_VERSION = "1.4.0"
 DIRECTION_CONVENTION = "plugin_grid_ccw_from_north"
 MAX_WAYPOINT_LIMIT = 200
 MAX_ROUTE_WAYPOINTS = 40 * (MAX_WAYPOINT_LIMIT - 1) + 1
@@ -363,7 +363,8 @@ def _segment_seconds(edges, start, end, speed, mode, photo_allowance):
     return seconds
 
 
-def _flight_result(index, start, end, points, edges, speed, mode, interval, photo_allowance, budget, finish_action, location):
+def _flight_result(index, start, end, points, edges, speed, mode, interval, photo_allowance, budget, finish_action, location,
+                   pitch_deg=-90):
     route_distance = sum(edges[start:end])
     launch = location.get("launch") if location else None
     home = location.get("home") if location else None
@@ -383,13 +384,13 @@ def _flight_result(index, start, end, points, edges, speed, mode, interval, phot
         for waypoint_index in range(start, end + 1):
             if waypoint_index == start:
                 actions.extend([
-                    {"type": "rotate_camera", "waypoint_index": waypoint_index, "pitch_deg": -90},
+                    {"type": "rotate_camera", "waypoint_index": waypoint_index, "pitch_deg": pitch_deg},
                     {"type": "hover", "waypoint_index": waypoint_index, "duration_s": 3.0},
                 ])
             actions.append({"type": "take_photo", "waypoint_index": waypoint_index})
         photo_count = end - start + 1
     else:
-        actions = [{"type": "rotate_camera", "waypoint_index": start, "pitch_deg": -90}]
+        actions = [{"type": "rotate_camera", "waypoint_index": start, "pitch_deg": pitch_deg}]
         photo_count = math.floor((route_distance / speed) / interval)
     return {
         "index": index,
