@@ -1,0 +1,278 @@
+{
+  "request": {
+    "contract_version": 1,
+    "operation": "plan_oblique",
+    "mapping_style": "oblique",
+    "profile_version": 1,
+    "drone_profile_id": "mini4pro",
+    "survey_area": {
+      "exterior": [
+        {
+          "latitude_deg": 51,
+          "longitude_deg": -114
+        },
+        {
+          "latitude_deg": 51,
+          "longitude_deg": -113.9994
+        },
+        {
+          "latitude_deg": 51.0004,
+          "longitude_deg": -113.9994
+        },
+        {
+          "latitude_deg": 51.0004,
+          "longitude_deg": -114
+        }
+      ]
+    },
+    "altitude_m": 60,
+    "speed_m_s": 5,
+    "side_overlap_ratio": 0.7,
+    "margin_m": 0,
+    "direction": {
+      "mode": "automatic"
+    },
+    "capture": {
+      "mode": "semi_auto"
+    },
+    "gimbal_pitch_deg": -45,
+    "turn_style": "curved",
+    "finish_action": "return_to_home",
+    "split": {
+      "enabled": true,
+      "requested_flights": 1,
+      "max_waypoints_per_flight": 200
+    },
+    "pattern": "fast",
+    "include_nadir": false,
+    "reverse_route": true
+  },
+  "result": {
+    "contract_version": 1,
+    "engine_version": "1.4.0",
+    "profile_version": 1,
+    "operation": "plan_oblique",
+    "mapping_style": "oblique",
+    "drone_profile_id": "mini4pro",
+    "drone_profile_name": "DJI Mini 4 Pro",
+    "resolved_direction": {
+      "convention": "plugin_grid_ccw_from_north",
+      "value_deg": 88.0
+    },
+    "turn_style": "curved",
+    "finish_action": "return_to_home",
+    "oblique": {
+      "gimbal_pitch_deg": -45.0,
+      "include_nadir": false,
+      "pattern": "fast",
+      "reverse_route": true,
+      "slant_distance_m": 84.85281374238569,
+      "offset_m": 59.99999999999999,
+      "passes": [
+        {
+          "kind": "grid",
+          "look_bearing_deg": null,
+          "heading_deg": null,
+          "gimbal_pitch_deg": -45.0,
+          "grid_direction_deg": 88.0,
+          "start_waypoint_index": 0,
+          "end_waypoint_index": 1,
+          "waypoint_count": 2,
+          "line_spacing_m": 35.41682660551751,
+          "shot_spacing_m": 10.0
+        },
+        {
+          "kind": "cross_grid",
+          "look_bearing_deg": null,
+          "heading_deg": null,
+          "gimbal_pitch_deg": -45.0,
+          "grid_direction_deg": 178.0,
+          "start_waypoint_index": 2,
+          "end_waypoint_index": 3,
+          "waypoint_count": 2,
+          "line_spacing_m": 35.41682660551751,
+          "shot_spacing_m": 10.0
+        }
+      ]
+    },
+    "route": {
+      "waypoints": [
+        {
+          "index": 0,
+          "position": {
+            "latitude_deg": 51.00031299309137,
+            "longitude_deg": -114.0008545972528
+          },
+          "roles": [
+            "pass_start",
+            "route_start",
+            "survey_strip_start"
+          ],
+          "pass_index": 0,
+          "heading_deg": null
+        },
+        {
+          "index": 1,
+          "position": {
+            "latitude_deg": 51.00032143796607,
+            "longitude_deg": -113.99854540207696
+          },
+          "roles": [
+            "pass_end",
+            "survey_strip_end"
+          ],
+          "pass_index": 0,
+          "heading_deg": null
+        },
+        {
+          "index": 2,
+          "position": {
+            "latitude_deg": 50.99946075272568,
+            "longitude_deg": -113.99989583945545
+          },
+          "roles": [
+            "pass_start",
+            "survey_strip_start"
+          ],
+          "pass_index": 1,
+          "heading_deg": null
+        },
+        {
+          "index": 3,
+          "position": {
+            "latitude_deg": 51.000939247614625,
+            "longitude_deg": -113.99990942570079
+          },
+          "roles": [
+            "pass_end",
+            "route_end",
+            "survey_strip_end"
+          ],
+          "pass_index": 1,
+          "heading_deg": null
+        }
+      ],
+      "strips": [
+        {
+          "index": 0,
+          "start_waypoint_index": 0,
+          "end_waypoint_index": 1,
+          "pass_index": 0
+        },
+        {
+          "index": 1,
+          "start_waypoint_index": 2,
+          "end_waypoint_index": 3,
+          "pass_index": 1
+        }
+      ]
+    },
+    "flights": [
+      {
+        "index": 0,
+        "route_start_waypoint_index": 0,
+        "route_end_waypoint_index": 1,
+        "waypoint_count": 2,
+        "actions": [
+          {
+            "type": "rotate_camera",
+            "waypoint_index": 0,
+            "pitch_deg": -45.0
+          }
+        ],
+        "route_distance_m": 162.1017557445045,
+        "outbound_distance_m": null,
+        "recovery_distance_m": null,
+        "known_distance_m": 162.1017557445045,
+        "total_distance_m": null,
+        "capture_allowance_seconds": 0.0,
+        "startup_wait_seconds": 0.0,
+        "known_estimated_seconds": 32.4203511489009,
+        "total_estimated_seconds": null,
+        "usable_battery_seconds": 1440.0,
+        "estimates_complete": false,
+        "photo_count": 16,
+        "photo_count_kind": "estimate"
+      },
+      {
+        "index": 1,
+        "route_start_waypoint_index": 2,
+        "route_end_waypoint_index": 3,
+        "waypoint_count": 2,
+        "actions": [
+          {
+            "type": "rotate_camera",
+            "waypoint_index": 2,
+            "pitch_deg": -45.0
+          }
+        ],
+        "route_distance_m": 164.48277949153618,
+        "outbound_distance_m": null,
+        "recovery_distance_m": null,
+        "known_distance_m": 164.48277949153618,
+        "total_distance_m": null,
+        "capture_allowance_seconds": 0.0,
+        "startup_wait_seconds": 0.0,
+        "known_estimated_seconds": 32.896555898307234,
+        "total_estimated_seconds": null,
+        "usable_battery_seconds": 1440.0,
+        "estimates_complete": false,
+        "photo_count": 16,
+        "photo_count_kind": "estimate"
+      }
+    ],
+    "statistics": {
+      "survey_area_m2": 1874.2409712672234,
+      "route_distance_m": 326.58453523604067,
+      "outbound_distance_m": null,
+      "recovery_distance_m": null,
+      "known_distance_m": 326.58453523604067,
+      "total_distance_m": null,
+      "known_estimated_seconds": 65.31690704720813,
+      "total_estimated_seconds": null,
+      "photo_count": 32,
+      "photo_count_kind": "estimate",
+      "strip_count": 2,
+      "waypoint_count": 4,
+      "battery_count": 2,
+      "estimates_complete": false
+    },
+    "capture": {
+      "mode": "semi_auto",
+      "profile_interval_s": 2.0,
+      "shot_spacing_m": 10.0
+    },
+    "assumptions": [
+      {
+        "code": "photo_centre_at_takeoff_level",
+        "message": "Oblique spacing and pass offsets use the slant distance to takeoff ground level."
+      },
+      {
+        "code": "straight_segment_estimate",
+        "message": "Distance and time use straight waypoint segments for every turn style."
+      },
+      {
+        "code": "unmodeled_operations",
+        "message": "Takeoff, climb, landing, and additional turn delays are not modeled."
+      },
+      {
+        "code": "battery_reserve_separate",
+        "message": "The profile usable-time budget is applied without a blanket time multiplier."
+      }
+    ],
+    "warnings": [
+      {
+        "code": "travel_estimate_incomplete",
+        "message": "Flight 1 is missing launch or recovery location travel."
+      },
+      {
+        "code": "travel_estimate_incomplete",
+        "message": "Flight 2 is missing launch or recovery location travel."
+      }
+    ],
+    "validation": {
+      "export_allowed": true,
+      "errors": []
+    }
+  }
+}

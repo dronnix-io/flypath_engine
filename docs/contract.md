@@ -199,6 +199,12 @@ of an area, for 3D models. It is an additive operation under contract version
 
 ## Oblique result
 
+Engine release `v1.4.1` fixes empty grids on narrow valid areas and makes the
+Fast pattern's directional sweep continuous. These geometry corrections retain
+contract version 1. New planning uses v1.4.1; verifying a saved v1.4.0 oblique
+result may call `plan_oblique(request, engine_version="1.4.0")` to reproduce the
+v1.4.0 Fast sweep and result provenance. Other requested engine versions fail.
+
 The result uses the `plan_2d` shape with these differences:
 
 - `operation`, `mapping_style: "oblique"`, and an `oblique` block with the

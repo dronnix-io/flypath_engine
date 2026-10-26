@@ -27,6 +27,7 @@ waypoint.
 import math
 
 from shapely import affinity
+from shapely.geometry import Polygon
 from shapely.ops import unary_union
 
 from . import grid
@@ -50,12 +51,15 @@ FINISH_ACTIONS = ("return_to_home", "return_to_first_waypoint", "hover", "land")
 # flight lines' bearing.
 LOOKS = ("forward", "right", "back", "left")
 PATTERNS = ("full", "fast")
-# Steps used to stretch the area along the flight lines for the fast pattern.
+# Steps used by the v1.4.0 sampled Fast sweep during saved-route verification.
 STRETCH_STEPS = 8
 
 
-def plan_oblique(request):
+def plan_oblique(request, *, engine_version=None):
     """Return one deterministic, JSON-compatible oblique planning result."""
+    if engine_version not in (None, "1.4.0", ENGINE_VERSION):
+        raise PlanningError("unsupported_version", "Requested engine version is not available.", "engine_version")
+    replay_140 = engine_version == "1.4.0"
     if not isinstance(request, dict):
         raise PlanningError("invalid_request", "Planning request must be an object.")
     _keys(request, {
@@ -168,7 +172,7 @@ def plan_oblique(request):
 
     try:
         passes = _plan_passes(survey_area, resolved_direction, altitude, slant, offset, pitch, include_nadir, pattern,
-                              lens, camera, side_overlap, front_overlap, speed, interval, margin, mode)
+                              lens, camera, side_overlap, front_overlap, speed, interval, margin, mode, replay_140)
         area = survey_area_m2(survey_area)
     except grid.GridCapacityError as exc:
         raise PlanningError("capacity_exceeded", str(exc), "survey_area") from None
@@ -235,7 +239,7 @@ def plan_oblique(request):
     complete = all(flight["estimates_complete"] for flight in flights)
     result = {
         "contract_version": CONTRACT_VERSION,
-        "engine_version": ENGINE_VERSION,
+        "engine_version": "1.4.0" if replay_140 else ENGINE_VERSION,
         "profile_version": PROFILE_VERSION,
         "operation": "plan_oblique",
         "mapping_style": "oblique",
@@ -295,7 +299,7 @@ def plan_oblique(request):
 
 
 def _plan_passes(survey_area, direction, altitude, slant, offset, pitch, include_nadir, pattern, lens, camera,
-                 side_overlap, front_overlap, speed, interval, margin, mode):
+                 side_overlap, front_overlap, speed, interval, margin, mode, replay_140):
     """The grid of every pass: nadir first when included, then the oblique ones."""
     # Flight lines run along this grid bearing (clockwise from grid north); the
     # engine's direction convention is counterclockwise.
@@ -310,7 +314,8 @@ def _plan_passes(survey_area, direction, altitude, slant, offset, pitch, include
         grid_direction = direction if index == 0 else (direction + 90) % 180
         plans.append({
             "kind": kind, "look": None, "pitch": pitch, "direction": grid_direction,
-            "area": _stretched_area(survey_area, (-grid_direction) % 360, offset),
+            "area": (_sampled_stretched_area if replay_140 else _stretched_area)(
+                survey_area, (-grid_direction) % 360, offset),
             "distance": slant,
         })
     for index, look in enumerate(LOOKS if pattern == "full" else ()):
@@ -446,6 +451,27 @@ def _shifted_area(survey_area, bearing_deg, distance_m):
 
 def _stretched_area(survey_area, bearing_deg, distance_m):
     """The survey area swept distance_m both ways along a grid bearing."""
+    metric, inverse = grid._metric_polygon(survey_area)
+    angle = math.radians(bearing_deg)
+    dx, dy = distance_m * math.sin(angle), distance_m * math.cos(angle)
+    pieces = [affinity.translate(metric, xoff=dx, yoff=dy),
+              affinity.translate(metric, xoff=-dx, yoff=-dy)]
+    polygons = metric.geoms if metric.geom_type == "MultiPolygon" else (metric,)
+    for polygon in polygons:
+        for ring in (polygon.exterior, *polygon.interiors):
+            coordinates = list(ring.coords)
+            for start, end in zip(coordinates, coordinates[1:]):
+                quad = Polygon([(start[0] - dx, start[1] - dy),
+                                (end[0] - dx, end[1] - dy),
+                                (end[0] + dx, end[1] + dy),
+                                (start[0] + dx, start[1] + dy)])
+                if quad.area:
+                    pieces.append(quad)
+    return _survey_area(unary_union(pieces).buffer(0), inverse)
+
+
+def _sampled_stretched_area(survey_area, bearing_deg, distance_m):
+    """The 1.4.0 sampled sweep, retained for saved-route verification."""
     metric, inverse = grid._metric_polygon(survey_area)
     angle = math.radians(bearing_deg)
     copies = [affinity.translate(metric, xoff=distance_m * step / STRETCH_STEPS * math.sin(angle),

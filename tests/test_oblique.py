@@ -8,11 +8,15 @@ import sys
 
 import pytest
 from pyproj import Geod
+from shapely import affinity
+from shapely.geometry import MultiPolygon, Polygon, Point
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from flypath_engine import PlanningError, plan_2d, plan_oblique  # noqa: E402
+from flypath_engine import grid  # noqa: E402
+from flypath_engine.oblique import _stretched_area, _survey_area  # noqa: E402
 
 GEOD = Geod(ellps="WGS84")
 AREA = {"exterior": [
@@ -67,7 +71,7 @@ def test_five_passes_nadir_first_then_four_looks():
     looks = [p["look_bearing_deg"] for p in passes[1:]]
     assert [(look - looks[0]) % 360 for look in looks] == [0, 90, 180, 270]
     assert result["operation"] == "plan_oblique" and result["mapping_style"] == "oblique"
-    assert result["engine_version"] == "1.4.0"
+    assert result["engine_version"] == "1.4.1"
     assert result["validation"]["export_allowed"] is True
     json.dumps(result)
 
@@ -230,6 +234,65 @@ def test_fast_pattern_lines_reach_past_the_area_by_the_offset():
     north = GEOD.inv(-114.0885, 51.0515, -114.0885, max(latitudes))[2]
     offset = result["oblique"]["offset_m"]
     assert south == pytest.approx(offset, abs=10) and north == pytest.approx(offset, abs=10)
+
+
+def test_fast_sweep_is_continuous_for_a_thin_rectangle():
+    area = {"exterior": [
+        {"latitude_deg": 51, "longitude_deg": -114},
+        {"latitude_deg": 51, "longitude_deg": -113.998},
+        {"latitude_deg": 51.000009, "longitude_deg": -113.998},
+        {"latitude_deg": 51.000009, "longitude_deg": -114},
+    ]}
+    swept, _ = grid._metric_polygon(_stretched_area(area, 0, 60))
+    source, _ = grid._metric_polygon(area)
+    assert swept.geom_type == "Polygon"
+    assert swept.area == pytest.approx(source.area + 120 * (source.bounds[2] - source.bounds[0]), rel=.02)
+
+
+def test_fast_sweep_preserves_holes_concavity_and_separate_parts():
+    metric, inverse = grid._metric_polygon(AREA)
+    x, y = metric.centroid.x, metric.centroid.y
+    shell = Polygon([(0, 0), (12, 0), (12, 12), (0, 12)],
+                    holes=[[(4, 4), (8, 4), (8, 8), (4, 8)]])
+    concave = Polygon([(20, 0), (32, 0), (32, 12), (30, 12),
+                       (30, 3), (22, 3), (22, 12), (20, 12)])
+    source = affinity.translate(MultiPolygon([shell, concave]), xoff=x, yoff=y)
+    result, _ = grid._metric_polygon(_stretched_area(_survey_area(source, inverse), 90, 1))
+    assert result.geom_type == "MultiPolygon" and len(result.geoms) == 2
+    assert not result.contains(Point(x + 6, y + 6))  # Hole survives the horizontal sweep.
+    assert not result.contains(Point(x + 26, y + 8))  # Concave gap stays open.
+    for shift in (-1, -.37, 0, .42, 1):
+        assert result.buffer(.001).covers(affinity.translate(source, xoff=shift))
+
+
+@pytest.mark.parametrize("pattern", ["full", "fast"])
+@pytest.mark.parametrize("direction", [{"mode": "automatic"}, {"mode": "manual", "value_deg": 0}])
+def test_narrow_oblique_area_plans(pattern, direction):
+    area = {"exterior": [
+        {"latitude_deg": 51, "longitude_deg": -114},
+        {"latitude_deg": 51, "longitude_deg": -113.9996},
+        {"latitude_deg": 51.0008, "longitude_deg": -113.9996},
+        {"latitude_deg": 51.0008, "longitude_deg": -114},
+    ]}
+    result = plan_oblique(_request(survey_area=area, direction=direction,
+                                   gimbal_pitch_deg=-20, pattern=pattern, include_nadir=False))
+    assert result["route"]["waypoints"]
+    assert len(result["oblique"]["passes"]) == (2 if pattern == "fast" else 4)
+    assert result["validation"]["export_allowed"] is True
+
+
+def test_fast_140_replay_matches_frozen_result():
+    fixture = json.loads((ROOT / "tests/fixtures/oblique-fast-1.4.0.json").read_text())
+    request, expected = fixture["request"], fixture["result"]
+    assert request["direction"]["mode"] == "automatic" and request["reverse_route"] is True
+    assert plan_oblique(request, engine_version="1.4.0") == expected
+    current = plan_oblique(request)
+    assert current["engine_version"] == "1.4.1"
+    assert current["contract_version"] == expected["contract_version"] == 1
+    for version in ("1.3.0", "", 1, []):
+        with pytest.raises(PlanningError) as error:
+            plan_oblique(request, engine_version=version)
+        assert (error.value.code, error.value.field) == ("unsupported_version", "engine_version")
 
 
 def test_fast_pattern_takes_less_flying_than_full():
