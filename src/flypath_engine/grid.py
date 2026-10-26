@@ -44,7 +44,7 @@ def generate_grid(survey_area, *, altitude_m, shot_spacing_m, side_overlap,
     columns = _scan_columns(
         rotated, line_spacing, shot_spacing,
         max_segments=(max_waypoints // 2 if max_waypoints else None),
-        max_steps=max_waypoints,
+        max_steps=max_waypoints, fallback_if_empty=True,
     )
     if max_waypoints:
         estimate = sum(
@@ -174,7 +174,7 @@ def _ring(points, field):
     return ring
 
 
-def _scan_columns(polygon, spacing, pad, max_segments=None, max_steps=None):
+def _scan_columns(polygon, spacing, pad, max_segments=None, max_steps=None, fallback_if_empty=False):
     min_x, min_y, max_x, max_y = polygon.bounds
     columns = []
     segment_count = 0
@@ -191,6 +191,19 @@ def _scan_columns(polygon, spacing, pad, max_segments=None, max_steps=None):
             raise GridCapacityError("Planned route exceeds the engine waypoint capacity.")
         columns.append((x, segments))
         x += spacing
+    if fallback_if_empty and segment_count == 0:
+        columns = []
+        parts = polygon.geoms if polygon.geom_type == "MultiPolygon" else (polygon,)
+        for x in sorted({part.representative_point().x for part in parts}):
+            steps += 1
+            if max_steps is not None and steps > max_steps:
+                raise GridCapacityError("Survey extent exceeds the engine scan capacity.")
+            clipped = LineString(((x, min_y - pad), (x, max_y + pad))).intersection(polygon)
+            segments = sorted(_line_intervals(clipped))
+            segment_count += len(segments)
+            if max_segments is not None and segment_count > max_segments:
+                raise GridCapacityError("Planned route exceeds the engine waypoint capacity.")
+            columns.append((x, segments))
     return columns
 
 

@@ -182,9 +182,72 @@ battery returns `splitting_required_waypoint_limit` or
 `flight_cannot_fit`, and more requested flights than route edges fail as
 `too_many_requested_flights`.
 
+## Oblique request
+
+Engine release `v1.4.0` adds `plan_oblique(request)` for oblique photography
+of an area, for 3D models. It is an additive operation under contract version
+1. The request is the `plan_2d` request with these differences:
+
+- `operation: "plan_oblique"` and `mapping_style: "oblique"`
+- `gimbal_pitch_deg` (-85 to -20), the camera pitch of the oblique passes
+- optional `include_nadir`, default `true`, to fly a nadir pass first
+- optional `pattern`, `full` (default) or `fast`
+- optional `reverse_route`, default `false`, to fly every pass from its other
+  end; the pass order stays the same
+- no `cross_hatch`; per-flight `locations` and terrain
+  following fail as `unsupported_feature`
+
+## Oblique result
+
+Engine release `v1.4.1` fixes empty grids on narrow valid areas and makes the
+Fast pattern's directional sweep continuous. These geometry corrections retain
+contract version 1. New planning uses v1.4.1; verifying a saved v1.4.0 oblique
+result may call `plan_oblique(request, engine_version="1.4.0")` to reproduce the
+v1.4.0 Fast sweep and result provenance. Other requested engine versions fail.
+
+The result uses the `plan_2d` shape with these differences:
+
+- `operation`, `mapping_style: "oblique"`, and an `oblique` block with the
+  pitch, `include_nadir`, the slant distance to the photo centre
+  (`altitude / sin(|pitch|)`), the pass offset (`altitude / tan(|pitch|)`),
+  and a `passes` list
+- the passes are flown in order: the nadir pass (`kind` `nadir`) when
+  included, then the oblique passes of the pattern. Each records its kind,
+  look bearing (grid, clockwise from grid north, or `null`), true
+  `heading_deg` (or `null`), pitch, grid direction, waypoint range, line
+  spacing, and shot spacing
+- `full` flies four oblique passes whose camera faces along the flight lines,
+  to their right, back along them, and to their left (`kind` `forward`,
+  `right`, `back`, `left`). Each is the grid of the survey area moved against
+  its look bearing by the pass offset, with lines along the look bearing; the
+  drone holds the pass heading
+- `fast` flies two crossing grids (`kind` `grid`, `cross_grid`) with the
+  drone facing along its lines, so neighbouring lines photograph opposite
+  sides. Each is the grid of the survey area swept by the pass offset both
+  ways along its lines
+- the nadir pass is the `plan_2d` grid; oblique passes space lines and photos
+  from the slant distance instead of the altitude
+- every route waypoint carries `pass_index` and `heading_deg`: the held pass
+  heading of a `full` pass, or `null` (face along the path) on the nadir and
+  `fast` passes; pass boundaries carry the `pass_start` and `pass_end` roles,
+  and strips carry `pass_index`
+- a flight never spans two passes. Without splitting, every pass is one
+  flight; with splitting, every pass is cut into the fewest balanced flights
+  that fit, and more are added to the passes with the longest flights until
+  there are at least `requested_flights`. A pass's first flight starts at its
+  `pass_start` waypoint; flights inside a pass share their seam, as in
+  `plan_2d`
+- every flight turns the camera to its pass pitch at its first waypoint;
+  full-auto adds the 3-second hover there and a photo at every waypoint
+- `capture.shot_spacing_m` reports the shortest pass spacing, and
+  `survey_area_m2` the drawn area
+
+Without splitting, a pass above the waypoint limit or one battery returns
+`splitting_required_waypoint_limit` or `splitting_required_battery_limit`.
+
 ## Ownership
 
-The shared Python core owns coordinate normalization, direction, 2D and orbit route generation, ordering,
+The shared Python core owns coordinate normalization, direction, 2D, oblique and orbit route generation, ordering,
 splitting, photo actions, geographic measurements, estimates, and planning
 warnings.
 

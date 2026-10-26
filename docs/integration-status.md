@@ -18,6 +18,18 @@ mission synchronization still carries one ring flown as one flight, so the
 website side of rings and splitting remains to be added. The plugin build
 requires the public v1.3.0 tag at its pinned commit before release.
 
+Release `v1.4.0` adds `plan_oblique` under contract version 1: an optional
+nadir pass and four oblique passes over a survey area, each oblique pass
+facing one side with a user-set camera pitch and moved out from the area by
+the pass offset. The QGIS plugin plans and exports oblique missions as one
+KMZ per flight; mission synchronization does not carry them yet, so the
+website side remains to be added. The plugin pins the public engine source
+to an immutable commit.
+
+Release `v1.4.1` fixes narrow valid grids and Fast oblique sweep gaps under
+contract version 1. Saved v1.4.0 Fast results can be replayed through the
+versioned oblique entry point when verifying their original route.
+
 ## Public integration
 
 - The QGIS plugin vendors the pinned engine source and remains offline-capable.
