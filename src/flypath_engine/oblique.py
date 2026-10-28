@@ -39,6 +39,7 @@ from .planning import (
     _locations, _number, _route_metadata, _validate_area, _version,
 )
 from .profiles import PROFILE_VERSION, drone_profile
+from .precision import versioned, number as quantize
 
 
 MIN_PITCH_DEG = -85
@@ -55,9 +56,10 @@ PATTERNS = ("full", "fast")
 STRETCH_STEPS = 8
 
 
+@versioned
 def plan_oblique(request, *, engine_version=None):
     """Return one deterministic, JSON-compatible oblique planning result."""
-    if engine_version not in (None, "1.4.0", ENGINE_VERSION):
+    if engine_version not in (None, "1.4.0", "1.4.1", ENGINE_VERSION):
         raise PlanningError("unsupported_version", "Requested engine version is not available.", "engine_version")
     replay_140 = engine_version == "1.4.0"
     if not isinstance(request, dict):
@@ -167,8 +169,8 @@ def plan_oblique(request, *, engine_version=None):
     # The camera tilt from straight down, the distance from the drone to the
     # ground at the photo centre, and how far that centre lies ahead of it.
     tilt = math.radians(90 + pitch)
-    slant = altitude / math.cos(tilt)
-    offset = altitude * math.tan(tilt)
+    slant = quantize(altitude / math.cos(tilt))
+    offset = quantize(altitude * math.tan(tilt))
 
     try:
         passes = _plan_passes(survey_area, resolved_direction, altitude, slant, offset, pitch, include_nadir, pattern,

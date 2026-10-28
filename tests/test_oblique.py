@@ -71,7 +71,7 @@ def test_five_passes_nadir_first_then_four_looks():
     looks = [p["look_bearing_deg"] for p in passes[1:]]
     assert [(look - looks[0]) % 360 for look in looks] == [0, 90, 180, 270]
     assert result["operation"] == "plan_oblique" and result["mapping_style"] == "oblique"
-    assert result["engine_version"] == "1.4.1"
+    assert result["engine_version"] == "2.0.0"
     assert result["validation"]["export_allowed"] is True
     json.dumps(result)
 
@@ -287,7 +287,7 @@ def test_fast_140_replay_matches_frozen_result():
     assert request["direction"]["mode"] == "automatic" and request["reverse_route"] is True
     assert plan_oblique(request, engine_version="1.4.0") == expected
     current = plan_oblique(request)
-    assert current["engine_version"] == "1.4.1"
+    assert current["engine_version"] == "2.0.0"
     assert current["contract_version"] == expected["contract_version"] == 1
     for version in ("1.3.0", "", 1, []):
         with pytest.raises(PlanningError) as error:

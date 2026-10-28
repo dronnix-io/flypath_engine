@@ -41,7 +41,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
           cache: pip
-      - run: python -m pip install .
+      - run: python -m pip install . pytest
       - run: python tests/test_route.py
       - run: python tests/test_grid.py
       - run: python tests/test_measurements.py
@@ -49,6 +49,7 @@ jobs:
       - run: python tests/test_profiles.py
       - run: python tests/test_planning.py
       - run: python tests/test_orbit.py
+      - run: python -m pytest -q tests/test_oblique.py tests/test_precision.py
 
   package:
     runs-on: ubuntu-latest
