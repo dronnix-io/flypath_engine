@@ -23,6 +23,7 @@ from .planning import (
     _position, _version,
 )
 from .profiles import PROFILE_VERSION, drone_profile
+from .precision import versioned, number
 
 
 MIN_RADIUS_M = 5
@@ -37,6 +38,7 @@ FINISH_ACTIONS = ("return_to_home", "return_to_first_waypoint", "hover", "land")
 RING_FIELDS = ("radius_m", "altitude_m", "gimbal_pitch_deg")
 
 
+@versioned
 def plan_orbit(request):
     """Return one deterministic, JSON-compatible orbit planning result."""
     if not isinstance(request, dict):
@@ -161,7 +163,7 @@ def _plan_ring(ring, centre, lens, overlap, speed, interval, start_bearing, sign
 
     # Image width seen across the ring: the camera looks at the centre, so
     # neighbouring photos overlap across the image width at the slant distance.
-    slant = math.hypot(radius, altitude)
+    slant = number(math.hypot(radius, altitude))
     footprint = slant * lens[0] / lens[1]     # sensor width / focal length, in v1.2.0's order
     circumference = 2 * math.pi * radius
 

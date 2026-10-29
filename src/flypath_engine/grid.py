@@ -2,12 +2,13 @@
 
 import math
 
-from pyproj import CRS, Transformer
+from pyproj import CRS
 from shapely import affinity
 from shapely.geometry import LineString, MultiPolygon, Polygon
 from shapely.ops import transform
 
 from .route import boustrophedon_passes, boustrophedon_route
+from .precision import Projection, geometry
 
 
 class GridCapacityError(ValueError):
@@ -40,7 +41,7 @@ def generate_grid(survey_area, *, altitude_m, shot_spacing_m, side_overlap,
 
     centre = metric.centroid
     origin = (centre.x, centre.y)
-    rotated = affinity.rotate(metric, -direction_deg, origin=origin)
+    rotated = geometry(affinity.rotate(metric, -direction_deg, origin=origin))
     columns = _scan_columns(
         rotated, line_spacing, shot_spacing,
         max_segments=(max_waypoints // 2 if max_waypoints else None),
@@ -128,9 +129,9 @@ def _metric_polygon(survey_area):
     centre_longitude = ((centroid.x + 180) % 360) - 180
     zone = min(60, max(1, int((centre_longitude + 180) / 6) + 1))
     utm = CRS.from_epsg((32600 if centroid.y >= 0 else 32700) + zone)
-    forward = Transformer.from_crs("EPSG:4326", utm, always_xy=True)
-    inverse = Transformer.from_crs(utm, "EPSG:4326", always_xy=True)
-    metric = transform(forward.transform, polygon)
+    forward = Projection("EPSG:4326", utm, 3)
+    inverse = Projection(utm, "EPSG:4326", 9)
+    metric = geometry(transform(forward.transform, polygon))
     if not all(math.isfinite(value) for value in metric.bounds):
         raise ValueError("Survey area cannot be projected to finite coordinates.")
     return metric, inverse
@@ -209,7 +210,7 @@ def _scan_columns(polygon, spacing, pad, max_segments=None, max_steps=None, fall
 
 def _flight_cost(polygon, step, direction_deg, max_scan_steps=None):
     centre = polygon.centroid
-    rotated = affinity.rotate(polygon, -direction_deg, origin=(centre.x, centre.y))
+    rotated = geometry(affinity.rotate(polygon, -direction_deg, origin=(centre.x, centre.y)))
     low, start, high, end = rotated.bounds
     segments = 0
     offset = low + step / 2
@@ -226,7 +227,7 @@ def _flight_cost(polygon, step, direction_deg, max_scan_steps=None):
 
 def _route_length(polygon, direction_deg, spacing, max_scan_steps=None):
     centre = polygon.centroid
-    rotated = affinity.rotate(polygon, -direction_deg, origin=(centre.x, centre.y))
+    rotated = geometry(affinity.rotate(polygon, -direction_deg, origin=(centre.x, centre.y)))
     route = boustrophedon_route(_scan_columns(
         rotated, spacing, spacing, max_steps=max_scan_steps
     ))

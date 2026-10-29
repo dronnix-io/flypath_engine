@@ -21,6 +21,37 @@ Every request contains `contract_version`. Every result contains
 
 ## Coordinates and numbers
 
+### Contract 2 (engine 2.0.0)
+
+New consumers send `contract_version: 2` for 2D, Orbit and Oblique planning.
+The field schema stays the same; the numeric calculation rules are versioned:
+
+- Projected geometry uses a 0.001 metre grid before scan lines and route
+  decisions. Geographic outputs of native projection/geodesic calculations
+  use nine decimal places in degrees (approximately 0.11 mm at the equator).
+- Native geodesic distances use four decimal places in metres, areas three
+  decimal places in square metres, and bearings six decimal places in degrees.
+  These values feed photo counts, travel times and flight splitting.
+- Computed slant distance and oblique offset use six decimal places in metres.
+- Result floats use six decimal places, except latitude/longitude, which use
+  nine. Counts, indices, flags, nulls, action order and structural fields are
+  never rounded. Decimal ties follow Python's round-to-even rule.
+- Consumers compare the complete saved result and waypoint list exactly;
+  they must not round incoming results or apply a matching tolerance.
+
+Contract 1 keeps its original calculations for saved-route replay. Regeneration
+is required to move a mission to contract 2. Updating a consumer must never
+silently rewrite an existing mission. Contract 2 cannot replay as an older
+engine release. Consumers without contract-2 support must reject it.
+
+The cross-platform fixture contains exact result fingerprints for synthetic
+2D, Orbit and Oblique requests, full/semi-auto capture, automatic direction,
+multi-ring orbits and waypoint/split boundaries. CI checks the same fingerprints
+on Windows, Linux and macOS. This is a regression gate, not a mathematical
+proof for every possible native-library input or future library release.
+
+### Contract 1
+
 - Positions use objects: `{ "latitude_deg": 51, "longitude_deg": -114 }`.
 - Latitude is -90 through 90; longitude is -180 through 180.
 - Arrays never rely on ambiguous `[x, y]` coordinate ordering.

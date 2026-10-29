@@ -5,10 +5,11 @@ import math
 from . import grid
 from .measurements import route_distance_m, survey_area_m2
 from .profiles import PROFILE_VERSION, drone_profile
+from .precision import versioned
 
 
 CONTRACT_VERSION = 1
-ENGINE_VERSION = "1.4.1"
+ENGINE_VERSION = "2.0.0"
 DIRECTION_CONVENTION = "plugin_grid_ccw_from_north"
 MAX_WAYPOINT_LIMIT = 200
 MAX_ROUTE_WAYPOINTS = 40 * (MAX_WAYPOINT_LIMIT - 1) + 1
@@ -32,6 +33,7 @@ class PlanningError(ValueError):
         return result
 
 
+@versioned
 def plan_2d(request):
     """Return one deterministic, JSON-compatible 2D planning result."""
     if not isinstance(request, dict):

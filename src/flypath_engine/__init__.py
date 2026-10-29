@@ -1,6 +1,6 @@
 """Pure Python mission-planning core shared by FlyPath products."""
 
-__version__ = "1.4.1"
+__version__ = "2.0.0"
 
 from .planning import PlanningError, plan_2d
 from .oblique import plan_oblique

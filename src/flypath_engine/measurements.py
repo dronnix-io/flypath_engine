@@ -2,10 +2,10 @@
 
 import math
 
-from pyproj import Geod
+from .precision import Geodesic
 
 
-_WGS84 = Geod(ellps="WGS84")
+_WGS84 = Geodesic()
 
 
 def survey_area_m2(survey_area):
