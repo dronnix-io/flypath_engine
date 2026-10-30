@@ -276,6 +276,43 @@ The result uses the `plan_2d` shape with these differences:
 Without splitting, a pass above the waypoint limit or one battery returns
 `splitting_required_waypoint_limit` or `splitting_required_battery_limit`.
 
+## Panorama request
+
+Engine release `v2.1.0` adds `plan_panorama(request)`: photos all around one
+point, for a stitched panorama. It is an additive operation under contract
+versions 1 and 2. The request has:
+
+- `operation: "plan_panorama"` and `mapping_style: "panorama"`
+- `drone_profile_id`, `profile_version`, `centre`, `altitude_m`, `speed_m_s`
+  and `finish_action`, as in `plan_orbit`
+- `capture: {"mode": "full_auto", "overlap_ratio": 0.2 to 0.7}`, the overlap
+  between neighbouring photos, in a row and between rows
+- optional `include_nadir`, default `true`, to end with a straight-down photo
+- no splitting; terrain following fails as `unsupported_feature`
+
+## Panorama result
+
+DJI Fly missions cannot turn the drone in place, so the drone flies small laps
+around the point, facing outward, with one photo per heading:
+
+- camera rows split the 90 degrees from the horizon to straight down into equal
+  steps no larger than the photo height (from the profile's sensor height and
+  focal length) less the overlap. The first row is at 0 degrees; with
+  `include_nadir` the last is one photo at -90 over the point
+- each row is one lap, clockwise from north. The first lap has a 3 m radius and
+  each later lap is 1 m wider, so no two waypoints share a position. A row's
+  photo count keeps the overlap at its top edge, at least 3
+- a `panorama` block records the centre, altitude, overlap, `include_nadir`,
+  the camera's horizontal and vertical field of view, and the `rows` (pitch,
+  photo count, lap radius, waypoint range); strips are the rows
+- every waypoint carries `heading_deg` facing away from the point; roles are
+  `panorama_point` or `nadir`, with `row_start` and `row_end`
+- one flight: each row's first waypoint turns the camera to the row pitch and
+  hovers 2 seconds, other waypoints hover 1 second, and every waypoint takes a
+  photo
+- `capture.shot_spacing_m` is the photo spacing along the first lap, and
+  `survey_area_m2` is 0
+
 ## Ownership
 
 The shared Python core owns coordinate normalization, direction, 2D, oblique and orbit route generation, ordering,

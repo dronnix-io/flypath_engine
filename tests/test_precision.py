@@ -11,7 +11,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'src'))
 
-from flypath_engine import plan_2d, plan_oblique, plan_orbit, PlanningError
+from flypath_engine import plan_2d, plan_oblique, plan_orbit, plan_panorama, PlanningError
 
 
 def requests():
@@ -75,9 +75,20 @@ def requests():
         r['capture'] = {'mode': mode, **({'side_overlap_ratio': .8} if mode == 'full_auto' else {})}
         r['split'] = {'enabled': True, 'requested_flights': 3, 'max_waypoints_per_flight': 30}
         yield 'rings-' + mode, r
+    rng = random.Random(29)
+    for index in range(12):
+        yield f'panorama-{index}', {
+            'contract_version': 2, 'profile_version': 1, 'operation': 'plan_panorama',
+            'mapping_style': 'panorama', 'drone_profile_id': ('mini4pro', 'air3', 'mavic4pro')[index % 3],
+            'centre': {'latitude_deg': rng.uniform(-65, 65), 'longitude_deg': rng.uniform(-170, 170)},
+            'altitude_m': rng.uniform(20, 120), 'speed_m_s': 2., 'include_nadir': bool(index % 4),
+            'capture': {'mode': 'full_auto', 'overlap_ratio': rng.uniform(.2, .7)},
+            'finish_action': 'return_to_home',
+        }
 
 
-PLANNERS = {'plan_2d': plan_2d, 'plan_orbit': plan_orbit, 'plan_oblique': plan_oblique}
+PLANNERS = {'plan_2d': plan_2d, 'plan_orbit': plan_orbit, 'plan_oblique': plan_oblique,
+            'plan_panorama': plan_panorama}
 
 
 def fingerprint(result):
