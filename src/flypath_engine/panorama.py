@@ -15,10 +15,7 @@ before its photo; each row also tilts the camera at its first waypoint.
 
 Instead of points, a request can give a survey area. Its panorama points are
 placed on a hexagon grid (as Spexi's hexagons), one row at a time, the rows
-flown back and forth. The default spacing is three times the altitude: the
--30 degree row looks at ground about 1.7 altitudes away, and hexagon points
-that far apart are covered without gaps by circles of that radius
-(1.7 x sqrt(3) is about 3).
+flown back and forth. The default spacing is the altitude.
 
 Points are flown in the order given, straight from one panorama to the next.
 When the route needs more than one flight, it is cut between points, never in
@@ -49,7 +46,7 @@ MIN_ROW_PHOTOS = 3
 FIRST_LAP_RADIUS_M = 3.0         # the first row's lap around the point
 LAP_GAP_M = 1.0                  # each later row's lap is this much wider
 LAP_CLEARANCE_M = 5.0            # the least gap between the outer laps of two points
-AUTO_SPACING_PER_ALTITUDE = 3.0  # area points: spacing as a multiple of the altitude
+AUTO_SPACING_PER_ALTITUDE = 1.0  # area points: spacing as a multiple of the altitude
 MAX_POINT_SPACING_M = 5_000
 SHOT_SETTLE_S = 1.0              # hold still before each photo
 ROW_SETTLE_S = 2.0               # longer where the camera tilts to a new row

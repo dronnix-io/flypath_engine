@@ -98,7 +98,7 @@ def requests():
                 {'latitude_deg': latitude + dy, 'longitude_deg': longitude + dx}
                 for dx, dy in ((0, 0), (.006, 0), (.006, .004), (0, .004))], 'holes': []},
             **({'point_spacing_m': rng.uniform(120, 300)} if index % 2 else {}),
-            'altitude_m': rng.uniform(40, 90), 'speed_m_s': 8.,
+            'altitude_m': rng.uniform(150, 300), 'speed_m_s': 8.,
             'capture': {'mode': 'full_auto', 'overlap_ratio': .3},
             'finish_action': 'return_to_home',
         }

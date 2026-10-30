@@ -302,10 +302,8 @@ With a `survey_area`, the engine places the points on a hexagon grid centred on
 the area's centroid in its UTM zone: rows west to east, each half a spacing
 along from the last, flown back and forth from south to north. Only points
 inside the area are kept; an area too small for a grid point gets one point
-inside it. `point_spacing_m` defaults to three times `altitude_m`: the -30
-degree row looks at ground about 1.7 altitudes away, and hexagon points that
-far apart are covered without gaps by circles of that radius. More than 50
-points fail as `too_many_points`.
+inside it. `point_spacing_m` defaults to `altitude_m`. More than 50 points
+fail as `too_many_points`.
 
 ## Panorama result
 

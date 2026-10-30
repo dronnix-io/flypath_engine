@@ -190,7 +190,7 @@ AREA = {"exterior": [
 
 
 def _area_request(**overrides):
-    request = _request(survey_area=AREA, speed_m_s=8)
+    request = _request(survey_area=AREA, speed_m_s=8, altitude_m=180)
     request.pop("points")
     request.update(overrides)
     return request
@@ -200,7 +200,7 @@ def _metres(first, second):
     return GEOD.inv(first["longitude_deg"], first["latitude_deg"], second["longitude_deg"], second["latitude_deg"])[2]
 
 
-def test_area_points_sit_on_a_hexagon_grid_three_altitudes_apart():
+def test_area_points_sit_on_a_hexagon_grid_one_altitude_apart():
     result = plan_panorama(_area_request())
     panorama = result["panorama"]
     assert panorama["layout"] == "area" and panorama["point_spacing_m"] == 180
