@@ -88,6 +88,20 @@ def requests():
             'capture': {'mode': 'full_auto', 'overlap_ratio': rng.uniform(.2, .7)},
             'finish_action': 'return_to_home',
         }
+    rng = random.Random(31)
+    for index in range(8):
+        latitude, longitude = rng.uniform(-65, 65), rng.uniform(-170, 170)
+        yield f'panorama-area-{index}', {
+            'contract_version': 2, 'profile_version': 1, 'operation': 'plan_panorama',
+            'mapping_style': 'panorama', 'drone_profile_id': 'mini4pro',
+            'survey_area': {'exterior': [
+                {'latitude_deg': latitude + dy, 'longitude_deg': longitude + dx}
+                for dx, dy in ((0, 0), (.006, 0), (.006, .004), (0, .004))], 'holes': []},
+            **({'point_spacing_m': rng.uniform(120, 300)} if index % 2 else {}),
+            'altitude_m': rng.uniform(40, 90), 'speed_m_s': 8.,
+            'capture': {'mode': 'full_auto', 'overlap_ratio': .3},
+            'finish_action': 'return_to_home',
+        }
 
 
 PLANNERS = {'plan_2d': plan_2d, 'plan_orbit': plan_orbit, 'plan_oblique': plan_oblique,

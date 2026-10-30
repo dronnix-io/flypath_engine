@@ -181,3 +181,68 @@ def test_one_panorama_above_the_waypoint_limit_blocks_export():
     result = plan_panorama(_request(split={"max_waypoints_per_flight": 20}))
     assert not result["validation"]["export_allowed"]
     assert result["validation"]["errors"][0]["code"] == "waypoint_limit_exceeded"
+
+
+AREA = {"exterior": [
+    {"latitude_deg": 51.05, "longitude_deg": -114.09}, {"latitude_deg": 51.05, "longitude_deg": -114.08},
+    {"latitude_deg": 51.055, "longitude_deg": -114.08}, {"latitude_deg": 51.055, "longitude_deg": -114.09},
+], "holes": []}
+
+
+def _area_request(**overrides):
+    request = _request(survey_area=AREA, speed_m_s=8)
+    request.pop("points")
+    request.update(overrides)
+    return request
+
+
+def _metres(first, second):
+    return GEOD.inv(first["longitude_deg"], first["latitude_deg"], second["longitude_deg"], second["latitude_deg"])[2]
+
+
+def test_area_points_sit_on_a_hexagon_grid_three_altitudes_apart():
+    result = plan_panorama(_area_request())
+    panorama = result["panorama"]
+    assert panorama["layout"] == "area" and panorama["point_spacing_m"] == 180
+    centres = [record["centre"] for record in panorama["points"]]
+    assert len(centres) == 11
+    for centre in centres:
+        assert 51.05 <= centre["latitude_deg"] <= 51.055 and -114.09 <= centre["longitude_deg"] <= -114.08
+    # Every point's nearest neighbour is one spacing away, as on a hexagon grid.
+    for centre in centres:
+        nearest = min(_metres(centre, other) for other in centres if other is not centre)
+        assert nearest == pytest.approx(180, abs=1)
+    # Rows of 4, 3 and 4 points run back and forth: west to east, east to west, west to east.
+    longitudes = [centre["longitude_deg"] for centre in centres]
+    assert longitudes[:4] == sorted(longitudes[:4])
+    assert longitudes[4:7] == sorted(longitudes[4:7], reverse=True)
+    assert longitudes[7:] == sorted(longitudes[7:])
+    assert result["statistics"]["survey_area_m2"] == pytest.approx(390_000, rel=.01)
+    assert result["statistics"]["battery_count"] == 2 and result["validation"]["export_allowed"]
+
+
+def test_area_spacing_follows_the_request_and_small_areas_get_one_point():
+    assert len(plan_panorama(_area_request(point_spacing_m=300))["panorama"]["points"]) == 7
+    single = plan_panorama(_area_request(point_spacing_m=2000))["panorama"]["points"]
+    assert len(single) == 1
+    centre = single[0]["centre"]
+    assert 51.05 <= centre["latitude_deg"] <= 51.055 and -114.09 <= centre["longitude_deg"] <= -114.08
+
+
+@pytest.mark.parametrize("change,code", [
+    ({"point_spacing_m": 10}, "points_too_close"),
+    ({"point_spacing_m": 30}, "too_many_points"),
+    ({"point_spacing_m": 0}, "number_out_of_range"),
+    ({"points": [dict(CENTRE)]}, "invalid_points"),
+    ({"survey_area": {"exterior": [dict(CENTRE)], "holes": []}}, "invalid_geometry"),
+])
+def test_invalid_area_requests_are_rejected(change, code):
+    with pytest.raises(PlanningError) as error:
+        plan_panorama(_area_request(**change))
+    assert error.value.code == code
+
+
+def test_point_spacing_needs_an_area():
+    with pytest.raises(PlanningError) as error:
+        plan_panorama(_request(point_spacing_m=100))
+    assert error.value.code == "unsupported_feature"

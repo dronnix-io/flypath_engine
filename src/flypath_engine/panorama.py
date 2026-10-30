@@ -13,6 +13,13 @@ spaced so neighbours overlap by the same ratio at the row's top edge, where the
 photos are narrowest in heading. Every waypoint holds still for a moment
 before its photo; each row also tilts the camera at its first waypoint.
 
+Instead of points, a request can give a survey area. Its panorama points are
+placed on a hexagon grid (as Spexi's hexagons), one row at a time, the rows
+flown back and forth. The default spacing is three times the altitude: the
+-30 degree row looks at ground about 1.7 altitudes away, and hexagon points
+that far apart are covered without gaps by circles of that radius
+(1.7 x sqrt(3) is about 3).
+
 Points are flown in the order given, straight from one panorama to the next.
 When the route needs more than one flight, it is cut between points, never in
 the middle of a panorama: each flight takes as many whole panoramas as fit the
@@ -21,12 +28,15 @@ waypoint limit and one battery.
 
 import math
 
-from .measurements import _WGS84, route_distance_m
+from shapely.geometry import Point
+
+from . import grid
+from .measurements import _WGS84, route_distance_m, survey_area_m2
 from .orbit import FINISH_ACTIONS, _flight_record, _recovery, _signed_degrees
 from .planning import (
     CONTRACT_VERSION, ENGINE_VERSION, MAX_ALTITUDE_M, MAX_WAYPOINT_LIMIT, PlanningError,
     _complete_sum, _ensure_finite_json, _integer, _issue, _keys, _number, _optional_bool,
-    _position, _version,
+    _position, _validate_area, _version,
 )
 from .precision import number, versioned
 from .profiles import PROFILE_VERSION, drone_profile
@@ -39,6 +49,8 @@ MIN_ROW_PHOTOS = 3
 FIRST_LAP_RADIUS_M = 3.0         # the first row's lap around the point
 LAP_GAP_M = 1.0                  # each later row's lap is this much wider
 LAP_CLEARANCE_M = 5.0            # the least gap between the outer laps of two points
+AUTO_SPACING_PER_ALTITUDE = 3.0  # area points: spacing as a multiple of the altitude
+MAX_POINT_SPACING_M = 5_000
 SHOT_SETTLE_S = 1.0              # hold still before each photo
 ROW_SETTLE_S = 2.0               # longer where the camera tilts to a new row
 
@@ -50,8 +62,9 @@ def plan_panorama(request):
         raise PlanningError("invalid_request", "Planning request must be an object.")
     _keys(request, {
         "contract_version", "operation", "source_mission_id", "mapping_style",
-        "drone_profile_id", "profile_version", "points", "altitude_m", "speed_m_s",
-        "capture", "include_nadir", "finish_action", "split", "terrain_follow",
+        "drone_profile_id", "profile_version", "points", "survey_area", "point_spacing_m",
+        "altitude_m", "speed_m_s", "capture", "include_nadir", "finish_action", "split",
+        "terrain_follow",
     }, "request")
     if request.get("operation", "plan_panorama") != "plan_panorama":
         raise PlanningError("unsupported_operation", "Only plan_panorama is supported here.", "operation")
@@ -70,11 +83,23 @@ def plan_panorama(request):
         raise PlanningError("profile_not_found", "Drone profile is not available.", "drone_profile_id") from None
     aircraft, camera = profile["aircraft"], profile["camera"]
 
-    points = request.get("points")
-    if not isinstance(points, list) or not 1 <= len(points) <= MAX_POINTS:
-        raise PlanningError("invalid_points", "A panorama mission has 1 to %d points." % MAX_POINTS, "points")
-    points = [_position(point, "points[%d]" % index) for index, point in enumerate(points)]
+    if ("points" in request) == ("survey_area" in request):
+        raise PlanningError("invalid_points", "Give either points or a survey_area.", "points")
     altitude = _number(request.get("altitude_m"), "altitude_m", minimum=0, maximum=MAX_ALTITUDE_M, exclusive=True)
+    survey_area = request.get("survey_area")
+    point_spacing = None
+    if survey_area is None:
+        if "point_spacing_m" in request:
+            raise PlanningError("unsupported_feature", "point_spacing_m needs a survey_area.", "point_spacing_m")
+        points = request.get("points")
+        if not isinstance(points, list) or not 1 <= len(points) <= MAX_POINTS:
+            raise PlanningError("invalid_points", "A panorama mission has 1 to %d points." % MAX_POINTS, "points")
+        points = [_position(point, "points[%d]" % index) for index, point in enumerate(points)]
+    else:
+        _validate_area(survey_area)
+        point_spacing = (AUTO_SPACING_PER_ALTITUDE * altitude if request.get("point_spacing_m") is None
+                         else _number(request["point_spacing_m"], "point_spacing_m",
+                                      minimum=0, exclusive=True, maximum=MAX_POINT_SPACING_M))
     speed = _number(request.get("speed_m_s"), "speed_m_s", minimum=0, exclusive=True)
     if not aircraft["min_speed_ms"] <= speed <= aircraft["max_speed_ms"]:
         raise PlanningError("speed_out_of_profile_range", "Speed is outside the drone profile range.", "speed_m_s")
@@ -107,6 +132,21 @@ def plan_panorama(request):
     rows = _rows(horizontal_fov, vertical_fov, overlap, include_nadir)
     outer = max(row["radius_m"] for row in rows)
     spacing = 2 * outer + LAP_CLEARANCE_M
+    if survey_area is not None:
+        if point_spacing < spacing:
+            raise PlanningError("points_too_close",
+                                "Point spacing must be at least %g m, so the laps around the points do not "
+                                "overlap." % spacing, "point_spacing_m")
+        try:
+            points = _area_points(survey_area, point_spacing)
+            area_m2 = survey_area_m2(survey_area)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise PlanningError("invalid_geometry", str(exc), "survey_area") from None
+        if len(points) > MAX_POINTS:
+            raise PlanningError("too_many_points",
+                                "This area needs %d panorama points at %g m apart, more than %d; raise the "
+                                "point spacing or the altitude." % (len(points), point_spacing, MAX_POINTS),
+                                "point_spacing_m")
     for index in range(1, len(points)):
         for other in range(index):
             if route_distance_m([points[other], points[index]]) < spacing:
@@ -212,12 +252,14 @@ def plan_panorama(request):
             "horizontal_fov_deg": horizontal_fov,
             "vertical_fov_deg": vertical_fov,
             "min_point_spacing_m": spacing,
+            "layout": "points" if survey_area is None else "area",
+            "point_spacing_m": point_spacing,
             "points": point_records,
         },
         "route": {"waypoints": waypoints, "strips": strips},
         "flights": flights,
         "statistics": {
-            "survey_area_m2": 0.0,
+            "survey_area_m2": 0.0 if survey_area is None else area_m2,
             "route_distance_m": sum(item["route_distance_m"] for item in flights),
             "outbound_distance_m": None,
             "recovery_distance_m": _complete_sum(item["recovery_distance_m"] for item in flights),
@@ -251,6 +293,39 @@ def plan_panorama(request):
     }
     _ensure_finite_json(result)
     return result
+
+
+def _area_points(survey_area, spacing):
+    """Panorama points on a hexagon grid inside the area, in flight order.
+
+    The grid is centred on the area's centroid, in the area's UTM zone. Rows run
+    west to east, each half a spacing along from the last, and are flown back
+    and forth from south to north. An area too small to hold a grid point gets
+    one point inside it."""
+    metric, inverse = grid._metric_polygon(survey_area)
+    centre = metric.centroid
+    centre_x, centre_y = number(centre.x, 3), number(centre.y, 3)
+    min_x, min_y, max_x, max_y = metric.bounds
+    row_step = spacing * math.sqrt(3) / 2
+    rows = []
+    for row in range(math.floor((min_y - centre_y) / row_step), math.ceil((max_y - centre_y) / row_step) + 1):
+        y = number(centre_y + row * row_step, 3)
+        shift = spacing / 2 if row % 2 else 0.0
+        columns = range(math.floor((min_x - centre_x - shift) / spacing),
+                        math.ceil((max_x - centre_x - shift) / spacing) + 1)
+        found = [(number(centre_x + shift + column * spacing, 3), y) for column in columns]
+        found = [point for point in found if metric.covers(Point(point))]
+        if found:
+            rows.append(found if len(rows) % 2 == 0 else found[::-1])
+    metric_points = [point for row in rows for point in row]
+    if not metric_points:
+        inside = metric.representative_point()
+        metric_points = [(number(inside.x, 3), number(inside.y, 3))]
+    positions = []
+    for x, y in metric_points:
+        longitude, latitude = inverse.transform(x, y)
+        positions.append({"latitude_deg": latitude, "longitude_deg": longitude})
+    return positions
 
 
 def _panorama_flight(index, start, end, route):

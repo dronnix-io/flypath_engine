@@ -285,7 +285,8 @@ versions 1 and 2. The request has:
 - `operation: "plan_panorama"` and `mapping_style: "panorama"`
 - `drone_profile_id`, `profile_version`, `altitude_m`, `speed_m_s` and
   `finish_action`, as in `plan_orbit`
-- `points`, a list of 1 to 50 positions, flown in that order
+- either `points`, a list of 1 to 50 positions flown in that order, or a
+  `survey_area` (as in `plan_2d`) with optional `point_spacing_m`
 - `capture: {"mode": "full_auto", "overlap_ratio": 0.2 to 0.7}`, the overlap
   between neighbouring photos, in a row and between rows
 - optional `include_nadir`, default `true`, to end each panorama with a
@@ -294,7 +295,17 @@ versions 1 and 2. The request has:
 - terrain following fails as `unsupported_feature`
 
 Points closer than twice the widest lap plus 5 m (15 m with the default rows)
-fail as `points_too_close`, because their laps would overlap.
+fail as `points_too_close`, because their laps would overlap; so does a
+smaller `point_spacing_m`.
+
+With a `survey_area`, the engine places the points on a hexagon grid centred on
+the area's centroid in its UTM zone: rows west to east, each half a spacing
+along from the last, flown back and forth from south to north. Only points
+inside the area are kept; an area too small for a grid point gets one point
+inside it. `point_spacing_m` defaults to three times `altitude_m`: the -30
+degree row looks at ground about 1.7 altitudes away, and hexagon points that
+far apart are covered without gaps by circles of that radius. More than 50
+points fail as `too_many_points`.
 
 ## Panorama result
 
@@ -309,8 +320,9 @@ flies small laps, facing outward, with one photo per heading:
   each later lap is 1 m wider, so no two waypoints share a position. A row's
   photo count keeps the overlap at its top edge, at least 3
 - a `panorama` block records the altitude, overlap, `include_nadir`, the
-  camera's horizontal and vertical field of view, `min_point_spacing_m`, and
-  the `points`, each with its centre, waypoint range and `rows` (pitch, photo
+  camera's horizontal and vertical field of view, `min_point_spacing_m`,
+  `layout` (`points` or `area`), `point_spacing_m` (`null` for given points),
+  and the `points`, each with its centre, waypoint range and `rows` (pitch, photo
   count, lap radius, waypoint range); strips are the rows of every point
 - every waypoint carries `heading_deg` facing away from its point and
   `point_index`; roles are `panorama_point` or `nadir`, with `row_start`,
@@ -321,7 +333,7 @@ flies small laps, facing outward, with one photo per heading:
   limit and one battery, and starts at a `point_start` waypoint. A single
   panorama above the waypoint limit returns `waypoint_limit_exceeded`
 - `capture.shot_spacing_m` is the photo spacing along the first lap, and
-  `survey_area_m2` is 0
+  `survey_area_m2` is the area's, or 0 for given points
 
 ## Ownership
 
