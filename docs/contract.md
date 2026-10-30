@@ -278,22 +278,28 @@ Without splitting, a pass above the waypoint limit or one battery returns
 
 ## Panorama request
 
-Engine release `v2.1.0` adds `plan_panorama(request)`: photos all around one
-point, for a stitched panorama. It is an additive operation under contract
+Engine release `v2.1.0` adds `plan_panorama(request)`: photos all around one or
+more points, for stitched panoramas. It is an additive operation under contract
 versions 1 and 2. The request has:
 
 - `operation: "plan_panorama"` and `mapping_style: "panorama"`
-- `drone_profile_id`, `profile_version`, `centre`, `altitude_m`, `speed_m_s`
-  and `finish_action`, as in `plan_orbit`
+- `drone_profile_id`, `profile_version`, `altitude_m`, `speed_m_s` and
+  `finish_action`, as in `plan_orbit`
+- `points`, a list of 1 to 50 positions, flown in that order
 - `capture: {"mode": "full_auto", "overlap_ratio": 0.2 to 0.7}`, the overlap
   between neighbouring photos, in a row and between rows
-- optional `include_nadir`, default `true`, to end with a straight-down photo
-- no splitting; terrain following fails as `unsupported_feature`
+- optional `include_nadir`, default `true`, to end each panorama with a
+  straight-down photo
+- optional `split: {"max_waypoints_per_flight": 2 to 200}`, default 200
+- terrain following fails as `unsupported_feature`
+
+Points closer than twice the widest lap plus 5 m (15 m with the default rows)
+fail as `points_too_close`, because their laps would overlap.
 
 ## Panorama result
 
-DJI Fly missions cannot turn the drone in place, so the drone flies small laps
-around the point, facing outward, with one photo per heading:
+DJI Fly missions cannot turn the drone in place, so at each point the drone
+flies small laps, facing outward, with one photo per heading:
 
 - camera rows split the 90 degrees from the horizon to straight down into equal
   steps no larger than the photo height (from the profile's sensor height and
@@ -302,14 +308,18 @@ around the point, facing outward, with one photo per heading:
 - each row is one lap, clockwise from north. The first lap has a 3 m radius and
   each later lap is 1 m wider, so no two waypoints share a position. A row's
   photo count keeps the overlap at its top edge, at least 3
-- a `panorama` block records the centre, altitude, overlap, `include_nadir`,
-  the camera's horizontal and vertical field of view, and the `rows` (pitch,
-  photo count, lap radius, waypoint range); strips are the rows
-- every waypoint carries `heading_deg` facing away from the point; roles are
-  `panorama_point` or `nadir`, with `row_start` and `row_end`
-- one flight: each row's first waypoint turns the camera to the row pitch and
-  hovers 2 seconds, other waypoints hover 1 second, and every waypoint takes a
-  photo
+- a `panorama` block records the altitude, overlap, `include_nadir`, the
+  camera's horizontal and vertical field of view, `min_point_spacing_m`, and
+  the `points`, each with its centre, waypoint range and `rows` (pitch, photo
+  count, lap radius, waypoint range); strips are the rows of every point
+- every waypoint carries `heading_deg` facing away from its point and
+  `point_index`; roles are `panorama_point` or `nadir`, with `row_start`,
+  `row_end`, `point_start` and `point_end`
+- each row's first waypoint turns the camera to the row pitch and hovers 2
+  seconds, other waypoints hover 1 second, and every waypoint takes a photo
+- flights hold whole panoramas: each takes as many points as fit the waypoint
+  limit and one battery, and starts at a `point_start` waypoint. A single
+  panorama above the waypoint limit returns `waypoint_limit_exceeded`
 - `capture.shot_spacing_m` is the photo spacing along the first lap, and
   `survey_area_m2` is 0
 

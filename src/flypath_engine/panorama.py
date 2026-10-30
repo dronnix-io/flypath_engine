@@ -1,17 +1,22 @@
-"""Versioned panorama planning: photos all around one point for a stitched panorama.
+"""Versioned panorama planning: photos all around one or more points, for stitched panoramas.
 
-DJI Fly missions cannot turn the drone in place, so the drone flies a very
-small circle around the panorama point, facing outward, and takes one photo at
-each heading. Each camera row is one lap at its own gimbal pitch, a little
-wider than the lap before so no two waypoints share a position. A straight-down
-photo over the point ends the mission. A few metres of movement does not show
-in a panorama of the surroundings.
+DJI Fly missions cannot turn the drone in place, so at each point the drone
+flies very small laps, facing outward, and takes one photo at each heading.
+Each camera row is one lap at its own gimbal pitch, a little wider than the lap
+before so no two waypoints share a position. A straight-down photo over the
+point ends that point's panorama. A few metres of movement does not show in a
+panorama of the surroundings.
 
 Rows run from the horizon (0 degrees) down towards straight down, evenly
 spaced so neighbouring rows overlap by the requested ratio. Photos in a row are
 spaced so neighbours overlap by the same ratio at the row's top edge, where the
 photos are narrowest in heading. Every waypoint holds still for a moment
 before its photo; each row also tilts the camera at its first waypoint.
+
+Points are flown in the order given, straight from one panorama to the next.
+When the route needs more than one flight, it is cut between points, never in
+the middle of a panorama: each flight takes as many whole panoramas as fit the
+waypoint limit and one battery.
 """
 
 import math
@@ -20,17 +25,20 @@ from .measurements import _WGS84, route_distance_m
 from .orbit import FINISH_ACTIONS, _flight_record, _recovery, _signed_degrees
 from .planning import (
     CONTRACT_VERSION, ENGINE_VERSION, MAX_ALTITUDE_M, MAX_WAYPOINT_LIMIT, PlanningError,
-    _ensure_finite_json, _issue, _keys, _number, _optional_bool, _position, _version,
+    _complete_sum, _ensure_finite_json, _integer, _issue, _keys, _number, _optional_bool,
+    _position, _version,
 )
 from .precision import number, versioned
 from .profiles import PROFILE_VERSION, drone_profile
 
 
+MAX_POINTS = 50
 MIN_OVERLAP = 0.2
 MAX_OVERLAP = 0.7
 MIN_ROW_PHOTOS = 3
 FIRST_LAP_RADIUS_M = 3.0         # the first row's lap around the point
 LAP_GAP_M = 1.0                  # each later row's lap is this much wider
+LAP_CLEARANCE_M = 5.0            # the least gap between the outer laps of two points
 SHOT_SETTLE_S = 1.0              # hold still before each photo
 ROW_SETTLE_S = 2.0               # longer where the camera tilts to a new row
 
@@ -42,8 +50,8 @@ def plan_panorama(request):
         raise PlanningError("invalid_request", "Planning request must be an object.")
     _keys(request, {
         "contract_version", "operation", "source_mission_id", "mapping_style",
-        "drone_profile_id", "profile_version", "centre", "altitude_m", "speed_m_s",
-        "capture", "include_nadir", "finish_action", "terrain_follow",
+        "drone_profile_id", "profile_version", "points", "altitude_m", "speed_m_s",
+        "capture", "include_nadir", "finish_action", "split", "terrain_follow",
     }, "request")
     if request.get("operation", "plan_panorama") != "plan_panorama":
         raise PlanningError("unsupported_operation", "Only plan_panorama is supported here.", "operation")
@@ -62,7 +70,10 @@ def plan_panorama(request):
         raise PlanningError("profile_not_found", "Drone profile is not available.", "drone_profile_id") from None
     aircraft, camera = profile["aircraft"], profile["camera"]
 
-    centre = _position(request.get("centre"), "centre")
+    points = request.get("points")
+    if not isinstance(points, list) or not 1 <= len(points) <= MAX_POINTS:
+        raise PlanningError("invalid_points", "A panorama mission has 1 to %d points." % MAX_POINTS, "points")
+    points = [_position(point, "points[%d]" % index) for index, point in enumerate(points)]
     altitude = _number(request.get("altitude_m"), "altitude_m", minimum=0, maximum=MAX_ALTITUDE_M, exclusive=True)
     speed = _number(request.get("speed_m_s"), "speed_m_s", minimum=0, exclusive=True)
     if not aircraft["min_speed_ms"] <= speed <= aircraft["max_speed_ms"]:
@@ -71,6 +82,12 @@ def plan_panorama(request):
     finish_action = request.get("finish_action", "return_to_home")
     if finish_action not in FINISH_ACTIONS:
         raise PlanningError("invalid_finish_action", "Finish action is not supported.", "finish_action")
+    split = request.get("split", {"max_waypoints_per_flight": MAX_WAYPOINT_LIMIT})
+    if not isinstance(split, dict):
+        raise PlanningError("invalid_split", "split must be an object.", "split")
+    _keys(split, {"max_waypoints_per_flight"}, "split")
+    waypoint_limit = _integer(split.get("max_waypoints_per_flight"), "split.max_waypoints_per_flight",
+                              minimum=2, maximum=MAX_WAYPOINT_LIMIT)
 
     capture = request.get("capture")
     if not isinstance(capture, dict) or capture.get("mode") != "full_auto":
@@ -88,39 +105,53 @@ def plan_panorama(request):
     vertical_fov = number(math.degrees(2 * math.atan(height / (2 * focal))))
 
     rows = _rows(horizontal_fov, vertical_fov, overlap, include_nadir)
-    waypoints, actions, edges, row_records = [], [], [], []
-    previous = None
-    for row_index, row in enumerate(rows):
-        start = len(waypoints)
-        for photo in range(row["photo_count"]):
-            bearing = 360.0 * photo / row["photo_count"]
-            if row["radius_m"]:
-                longitude, latitude, _back = _WGS84.fwd(centre["longitude_deg"], centre["latitude_deg"],
-                                                        bearing, row["radius_m"])
-                position = {"latitude_deg": latitude, "longitude_deg": longitude}
-            else:
-                position = dict(centre)             # the straight-down photo
-            index = len(waypoints)
-            roles = {"nadir"} if row["nadir"] else {"panorama_point"}
-            if photo == 0:
-                roles.add("row_start")
-                actions.append({"type": "rotate_camera", "waypoint_index": index,
-                                "pitch_deg": row["gimbal_pitch_deg"]})
-            if photo == row["photo_count"] - 1:
-                roles.add("row_end")
-            actions.append({"type": "hover", "waypoint_index": index,
-                            "duration_s": ROW_SETTLE_S if photo == 0 else SHOT_SETTLE_S})
-            actions.append({"type": "take_photo", "waypoint_index": index})
-            if previous is not None:
-                edges.append(route_distance_m([previous, position]))
-            previous = position
-            waypoints.append({"index": index, "position": position, "roles": roles,
-                              "heading_deg": _signed_degrees(bearing)})
-        row_records.append({
-            "index": row_index, "gimbal_pitch_deg": row["gimbal_pitch_deg"],
-            "photo_count": row["photo_count"], "radius_m": row["radius_m"],
-            "start_waypoint_index": start, "end_waypoint_index": len(waypoints) - 1,
-        })
+    outer = max(row["radius_m"] for row in rows)
+    spacing = 2 * outer + LAP_CLEARANCE_M
+    for index in range(1, len(points)):
+        for other in range(index):
+            if route_distance_m([points[other], points[index]]) < spacing:
+                raise PlanningError("points_too_close",
+                                    "Points %d and %d are closer than %g m, so their laps would overlap."
+                                    % (other + 1, index + 1, spacing), "points[%d]" % index)
+
+    waypoints, actions, edges, point_records = [], [], [], []
+    for point_index, centre in enumerate(points):
+        point_start = len(waypoints)
+        row_records = []
+        for row_index, row in enumerate(rows):
+            start = len(waypoints)
+            for photo in range(row["photo_count"]):
+                bearing = 360.0 * photo / row["photo_count"]
+                if row["radius_m"]:
+                    longitude, latitude, _back = _WGS84.fwd(centre["longitude_deg"], centre["latitude_deg"],
+                                                            bearing, row["radius_m"])
+                    position = {"latitude_deg": latitude, "longitude_deg": longitude}
+                else:
+                    position = dict(centre)             # the straight-down photo
+                index = len(waypoints)
+                roles = {"nadir"} if row["nadir"] else {"panorama_point"}
+                if photo == 0:
+                    roles.add("row_start")
+                    actions.append({"type": "rotate_camera", "waypoint_index": index,
+                                    "pitch_deg": row["gimbal_pitch_deg"]})
+                if photo == row["photo_count"] - 1:
+                    roles.add("row_end")
+                actions.append({"type": "hover", "waypoint_index": index,
+                                "duration_s": ROW_SETTLE_S if photo == 0 else SHOT_SETTLE_S})
+                actions.append({"type": "take_photo", "waypoint_index": index})
+                if waypoints:
+                    edges.append(route_distance_m([waypoints[-1]["position"], position]))
+                waypoints.append({"index": index, "position": position, "roles": roles,
+                                  "heading_deg": _signed_degrees(bearing), "point_index": point_index})
+            row_records.append({
+                "index": row_index, "gimbal_pitch_deg": row["gimbal_pitch_deg"],
+                "photo_count": row["photo_count"], "radius_m": row["radius_m"],
+                "start_waypoint_index": start, "end_waypoint_index": len(waypoints) - 1,
+            })
+        waypoints[point_start]["roles"].add("point_start")
+        waypoints[-1]["roles"].add("point_end")
+        point_records.append({"index": point_index, "centre": centre, "start_waypoint_index": point_start,
+                              "end_waypoint_index": len(waypoints) - 1, "rows": row_records})
     waypoints[0]["roles"].add("route_start")
     waypoints[-1]["roles"].add("route_end")
     for waypoint in waypoints:
@@ -129,20 +160,41 @@ def plan_panorama(request):
     usable_seconds = _number(aircraft.get("battery_safe_min"), "drone_profile.aircraft.battery_safe_min",
                              minimum=0, exclusive=True) * 60
     common = {"speed": speed, "mode": "full_auto", "usable_seconds": usable_seconds}
-    photo_count = len(waypoints)
-    hover_seconds = sum(action["duration_s"] for action in actions if action["type"] == "hover")
-    last = len(waypoints) - 1
-    flight = _flight_record(0, 0, last, actions, sum(edges),
-                            _recovery(waypoints[0]["position"], waypoints[last]["position"], finish_action),
-                            photo_count, photo_count * max(2.5, interval), hover_seconds, common)
-    blocking = []
-    if len(waypoints) > MAX_WAYPOINT_LIMIT:
-        blocking.append(_issue("waypoint_limit_exceeded",
-                               "The panorama needs more waypoints than the limit; lower the overlap."))
-    if flight["known_estimated_seconds"] > usable_seconds:
-        blocking.append(_issue("battery_time_exceeded", "The panorama exceeds the usable battery-time limit."))
+    route = {"waypoints": waypoints, "actions": actions, "edges": edges, "interval": interval,
+             "finish_action": finish_action, "common": common}
 
-    first = rows[0]
+    def flight(index, first, last):
+        start = point_records[first]["start_waypoint_index"]
+        end = point_records[last]["end_waypoint_index"]
+        return _panorama_flight(index, start, end, route)
+
+    # Whole panoramas per flight, as many as fit the waypoint limit and one battery.
+    groups, first = [], 0
+    for last in range(1, len(points)):
+        candidate = flight(0, first, last)
+        if (candidate["waypoint_count"] > waypoint_limit
+                or candidate["known_estimated_seconds"] > usable_seconds):
+            groups.append((first, last - 1))
+            first = last
+    groups.append((first, len(points) - 1))
+    flights = [flight(index, first, last) for index, (first, last) in enumerate(groups)]
+
+    blocking = []
+    per_point = len(waypoints) // len(points)
+    if per_point > waypoint_limit:
+        blocking.append(_issue("waypoint_limit_exceeded",
+                               "One panorama needs %d waypoints, more than the limit of %d; lower the overlap "
+                               "or raise the waypoint limit." % (per_point, waypoint_limit)))
+    if any(item["known_estimated_seconds"] > usable_seconds for item in flights):
+        blocking.append(_issue("battery_time_exceeded", "A panorama exceeds the usable battery-time limit."))
+
+    # A strip is one row of one point's panorama.
+    strips = [{"point_index": record["index"], "start_waypoint_index": row["start_waypoint_index"],
+               "end_waypoint_index": row["end_waypoint_index"]}
+              for record in point_records for row in record["rows"]]
+    for index, strip in enumerate(strips):
+        strip["index"] = index
+    first_row = rows[0]
     result = {
         "contract_version": CONTRACT_VERSION,
         "engine_version": ENGINE_VERSION,
@@ -154,51 +206,62 @@ def plan_panorama(request):
         "turn_style": "curved",
         "finish_action": finish_action,
         "panorama": {
-            "centre": centre,
             "altitude_m": altitude,
             "overlap_ratio": overlap,
             "include_nadir": include_nadir,
             "horizontal_fov_deg": horizontal_fov,
             "vertical_fov_deg": vertical_fov,
-            "rows": row_records,
+            "min_point_spacing_m": spacing,
+            "points": point_records,
         },
-        "route": {"waypoints": waypoints,
-                  "strips": [{"index": record["index"], "start_waypoint_index": record["start_waypoint_index"],
-                              "end_waypoint_index": record["end_waypoint_index"]} for record in row_records]},
-        "flights": [flight],
+        "route": {"waypoints": waypoints, "strips": strips},
+        "flights": flights,
         "statistics": {
             "survey_area_m2": 0.0,
-            "route_distance_m": flight["route_distance_m"],
+            "route_distance_m": sum(item["route_distance_m"] for item in flights),
             "outbound_distance_m": None,
-            "recovery_distance_m": flight["recovery_distance_m"],
-            "known_distance_m": flight["known_distance_m"],
+            "recovery_distance_m": _complete_sum(item["recovery_distance_m"] for item in flights),
+            "known_distance_m": sum(item["known_distance_m"] for item in flights),
             "total_distance_m": None,
-            "known_estimated_seconds": flight["known_estimated_seconds"],
+            "known_estimated_seconds": sum(item["known_estimated_seconds"] for item in flights),
             "total_estimated_seconds": None,
-            "photo_count": photo_count,
+            "photo_count": len(waypoints),
             "photo_count_kind": "actions",
-            "strip_count": len(row_records),
+            "strip_count": len(point_records) * len(rows),
             "waypoint_count": len(waypoints),
-            "battery_count": 1,
+            "battery_count": len(flights),
             "estimates_complete": False,
         },
         "capture": {
             "mode": "full_auto",
             "profile_interval_s": interval,
             # The spacing between photos along the first (horizon) lap.
-            "shot_spacing_m": 2 * math.pi * first["radius_m"] / first["photo_count"],
+            "shot_spacing_m": 2 * math.pi * first_row["radius_m"] / first_row["photo_count"],
             "side_overlap_ratio": overlap,
         },
         "assumptions": [
-            {"code": "small_lap_parallax", "message": "Laps of a few metres around the point are treated as one viewpoint."},
+            {"code": "small_lap_parallax", "message": "Laps of a few metres around a point are treated as one viewpoint."},
             {"code": "straight_segment_estimate", "message": "Distance and time use straight segments between waypoints."},
             {"code": "unmodeled_operations", "message": "Takeoff, climb, landing, and turning delays are not modeled."},
         ],
-        "warnings": [_issue("travel_estimate_incomplete", "Flight 1 is missing launch or recovery location travel.")],
+        "warnings": [_issue("travel_estimate_incomplete",
+                            "Flight %d is missing launch or recovery location travel." % (item["index"] + 1))
+                     for item in flights],
         "validation": {"export_allowed": not blocking, "errors": blocking},
     }
     _ensure_finite_json(result)
     return result
+
+
+def _panorama_flight(index, start, end, route):
+    """One flight over route waypoints start to end: whole panoramas."""
+    waypoints = route["waypoints"]
+    actions = [action for action in route["actions"] if start <= action["waypoint_index"] <= end]
+    photos = end - start + 1
+    hover_seconds = sum(action["duration_s"] for action in actions if action["type"] == "hover")
+    recovery = _recovery(waypoints[start]["position"], waypoints[end]["position"], route["finish_action"])
+    return _flight_record(index, start, end, actions, sum(route["edges"][start:end]), recovery,
+                          photos, photos * max(2.5, route["interval"]), hover_seconds, route["common"])
 
 
 def _rows(horizontal_fov, vertical_fov, overlap, include_nadir):

@@ -77,11 +77,14 @@ def requests():
         yield 'rings-' + mode, r
     rng = random.Random(29)
     for index in range(12):
+        latitude, longitude = rng.uniform(-65, 65), rng.uniform(-170, 170)
         yield f'panorama-{index}', {
             'contract_version': 2, 'profile_version': 1, 'operation': 'plan_panorama',
             'mapping_style': 'panorama', 'drone_profile_id': ('mini4pro', 'air3', 'mavic4pro')[index % 3],
-            'centre': {'latitude_deg': rng.uniform(-65, 65), 'longitude_deg': rng.uniform(-170, 170)},
+            'points': [{'latitude_deg': latitude + .0003 * step, 'longitude_deg': longitude}
+                       for step in range(1 + index % 3)],
             'altitude_m': rng.uniform(20, 120), 'speed_m_s': 2., 'include_nadir': bool(index % 4),
+            'split': {'max_waypoints_per_flight': (200, 40)[index % 2]},
             'capture': {'mode': 'full_auto', 'overlap_ratio': rng.uniform(.2, .7)},
             'finish_action': 'return_to_home',
         }

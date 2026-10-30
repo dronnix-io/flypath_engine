@@ -1,4 +1,4 @@
-"""Acceptance checks for panorama planning: small outward-facing laps around one point."""
+"""Acceptance checks for panorama planning: small outward-facing laps around each point."""
 
 import copy
 import json
@@ -25,7 +25,7 @@ def _request(**overrides):
         "mapping_style": "panorama",
         "profile_version": 1,
         "drone_profile_id": "mini4pro",
-        "centre": dict(CENTRE),
+        "points": [dict(CENTRE)],
         "altitude_m": 60,
         "speed_m_s": 2,
         "capture": {"mode": "full_auto", "overlap_ratio": .3},
@@ -35,8 +35,9 @@ def _request(**overrides):
     return request
 
 
-def _rows(result):
-    return [(row["gimbal_pitch_deg"], row["photo_count"], row["radius_m"]) for row in result["panorama"]["rows"]]
+def _rows(result, point=0):
+    return [(row["gimbal_pitch_deg"], row["photo_count"], row["radius_m"])
+            for row in result["panorama"]["points"][point]["rows"]]
 
 
 def test_sphere_rows_from_horizon_to_nadir():
@@ -55,7 +56,7 @@ def test_laps_face_outward_and_never_share_a_position():
     waypoints = result["route"]["waypoints"]
     positions = {(row["position"]["latitude_deg"], row["position"]["longitude_deg"]) for row in waypoints}
     assert len(positions) == len(waypoints)
-    for record in result["panorama"]["rows"][:-1]:
+    for record in result["panorama"]["points"][0]["rows"][:-1]:
         for index in range(record["start_waypoint_index"], record["end_waypoint_index"] + 1):
             row = waypoints[index]
             bearing, _back, distance = GEOD.inv(CENTRE["longitude_deg"], CENTRE["latitude_deg"],
@@ -70,7 +71,7 @@ def test_laps_face_outward_and_never_share_a_position():
 def test_every_photo_holds_still_and_each_row_tilts_the_camera():
     result = plan_panorama(_request())
     actions = result["flights"][0]["actions"]
-    for record in result["panorama"]["rows"]:
+    for record in result["panorama"]["points"][0]["rows"]:
         start = record["start_waypoint_index"]
         assert [action for action in actions if action["waypoint_index"] == start] == [
             {"type": "rotate_camera", "waypoint_index": start, "pitch_deg": record["gimbal_pitch_deg"]},
@@ -107,6 +108,11 @@ def test_contract_one_matches_contract_two_layout():
     ({"finish_action": "orbit"}, "invalid_finish_action"),
     ({"drone_profile_id": "m4e"}, "profile_not_found"),
     ({"radius_m": 5}, "unknown_field"),
+    ({"points": []}, "invalid_points"),
+    ({"points": dict(CENTRE)}, "invalid_points"),
+    ({"points": [dict(CENTRE)] * 51}, "invalid_points"),
+    ({"points": [{"latitude_deg": 91, "longitude_deg": 0}]}, "number_out_of_range"),
+    ({"split": {"max_waypoints_per_flight": 1}}, "number_out_of_range"),
 ])
 def test_invalid_requests_are_rejected(change, code):
     request = _request(**change)
@@ -120,3 +126,58 @@ def test_invalid_requests_are_rejected(change, code):
 def test_plans_are_deterministic():
     assert plan_panorama(_request()) == plan_panorama(_request())
     assert math.isfinite(plan_panorama(_request())["statistics"]["known_estimated_seconds"])
+
+
+def _east(metres):
+    """A point due east of the centre, at contract 2's nine decimal places."""
+    longitude, latitude, _back = GEOD.fwd(CENTRE["longitude_deg"], CENTRE["latitude_deg"], 90, metres)
+    return {"latitude_deg": round(latitude, 9), "longitude_deg": round(longitude, 9)}
+
+
+def test_points_are_flown_in_order_each_with_its_own_panorama():
+    points = [dict(CENTRE), _east(40), _east(80)]
+    result = plan_panorama(_request(points=points))
+    records = result["panorama"]["points"]
+    assert [record["centre"] for record in records] == points
+    assert [(record["start_waypoint_index"], record["end_waypoint_index"]) for record in records] == [
+        (0, 23), (24, 47), (48, 71)]
+    assert all(_rows(result, index) == _rows(result) for index in range(3))
+    waypoints = result["route"]["waypoints"]
+    assert [row["point_index"] for row in waypoints] == [0] * 24 + [1] * 24 + [2] * 24
+    assert "point_start" in waypoints[24]["roles"] and "point_end" in waypoints[23]["roles"]
+    assert waypoints[47]["position"] == points[1]          # each panorama ends straight down over its point
+    assert len(result["route"]["strips"]) == result["statistics"]["strip_count"] == 12
+    # 72 waypoints fit one flight under the default limit of 200.
+    assert result["statistics"]["battery_count"] == 1 and result["validation"]["export_allowed"]
+
+
+def test_points_too_close_for_their_laps_are_rejected():
+    with pytest.raises(PlanningError) as error:
+        plan_panorama(_request(points=[dict(CENTRE), _east(12)]))
+    assert error.value.code == "points_too_close" and error.value.field == "points[1]"
+    assert plan_panorama(_request(points=[dict(CENTRE), _east(15.1)]))["panorama"]["min_point_spacing_m"] == 15
+
+
+def test_flights_split_between_panoramas_never_inside_one():
+    points = [dict(CENTRE), _east(40), _east(80), _east(120)]
+    result = plan_panorama(_request(points=points, split={"max_waypoints_per_flight": 50}))
+    flights = result["flights"]
+    assert [(item["route_start_waypoint_index"], item["route_end_waypoint_index"]) for item in flights] == [
+        (0, 47), (48, 95)]
+    for item in flights:
+        start = item["route_start_waypoint_index"]
+        assert "point_start" in result["route"]["waypoints"][start]["roles"]
+        assert item["actions"][0] == {"type": "rotate_camera", "waypoint_index": start, "pitch_deg": 0.0}
+    assert result["statistics"]["battery_count"] == 2
+    assert result["statistics"]["photo_count"] == sum(item["photo_count"] for item in flights) == 96
+    # The transit between the two flights is not flown by either.
+    assert result["statistics"]["route_distance_m"] < sum(
+        GEOD.inv(a["position"]["longitude_deg"], a["position"]["latitude_deg"],
+                 b["position"]["longitude_deg"], b["position"]["latitude_deg"])[2]
+        for a, b in zip(result["route"]["waypoints"], result["route"]["waypoints"][1:]))
+
+
+def test_one_panorama_above_the_waypoint_limit_blocks_export():
+    result = plan_panorama(_request(split={"max_waypoints_per_flight": 20}))
+    assert not result["validation"]["export_allowed"]
+    assert result["validation"]["errors"][0]["code"] == "waypoint_limit_exceeded"
