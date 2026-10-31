@@ -61,7 +61,7 @@ def plan_panorama(request):
         "contract_version", "operation", "source_mission_id", "mapping_style",
         "drone_profile_id", "profile_version", "points", "survey_area", "point_spacing_m",
         "altitude_m", "speed_m_s", "capture", "include_nadir", "finish_action", "split",
-        "terrain_follow",
+        "turn_style", "terrain_follow",
     }, "request")
     if request.get("operation", "plan_panorama") != "plan_panorama":
         raise PlanningError("unsupported_operation", "Only plan_panorama is supported here.", "operation")
@@ -104,6 +104,9 @@ def plan_panorama(request):
     finish_action = request.get("finish_action", "return_to_home")
     if finish_action not in FINISH_ACTIONS:
         raise PlanningError("invalid_finish_action", "Finish action is not supported.", "finish_action")
+    turn_style = request.get("turn_style", "curved")
+    if turn_style not in ("curved", "straight"):
+        raise PlanningError("invalid_turn_style", "Turn style must be curved or straight.", "turn_style")
     split = request.get("split", {"max_waypoints_per_flight": MAX_WAYPOINT_LIMIT})
     if not isinstance(split, dict):
         raise PlanningError("invalid_split", "split must be an object.", "split")
@@ -240,7 +243,7 @@ def plan_panorama(request):
         "mapping_style": "panorama",
         "drone_profile_id": profile_id,
         "drone_profile_name": profile_name,
-        "turn_style": "curved",
+        "turn_style": turn_style,
         "finish_action": finish_action,
         "panorama": {
             "altitude_m": altitude,

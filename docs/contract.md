@@ -292,6 +292,8 @@ versions 1 and 2. The request has:
 - optional `include_nadir`, default `true`, to end each panorama with a
   straight-down photo
 - optional `split: {"max_waypoints_per_flight": 2 to 200}`, default 200
+- optional `turn_style`, `curved` (default) or `straight`, echoed in the result
+  for the consumer's waypoint path; the route is the same
 - terrain following fails as `unsupported_feature`
 
 Points closer than twice the widest lap plus 5 m (15 m with the default rows)

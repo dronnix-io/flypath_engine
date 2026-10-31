@@ -113,6 +113,7 @@ def test_contract_one_matches_contract_two_layout():
     ({"points": [dict(CENTRE)] * 51}, "invalid_points"),
     ({"points": [{"latitude_deg": 91, "longitude_deg": 0}]}, "number_out_of_range"),
     ({"split": {"max_waypoints_per_flight": 1}}, "number_out_of_range"),
+    ({"turn_style": "zigzag"}, "invalid_turn_style"),
 ])
 def test_invalid_requests_are_rejected(change, code):
     request = _request(**change)
@@ -246,3 +247,10 @@ def test_point_spacing_needs_an_area():
     with pytest.raises(PlanningError) as error:
         plan_panorama(_request(point_spacing_m=100))
     assert error.value.code == "unsupported_feature"
+
+
+def test_turn_style_is_echoed_and_keeps_the_route():
+    curved = plan_panorama(_request())
+    straight = plan_panorama(_request(turn_style="straight"))
+    assert curved["turn_style"] == "curved" and straight["turn_style"] == "straight"
+    assert straight["route"] == curved["route"] and straight["flights"] == curved["flights"]
