@@ -8,6 +8,8 @@ from shapely import set_precision
 
 
 CANONICAL_CONTRACT_VERSION = 2
+# Engine releases that plan contract 2; saved results replay with the newest.
+CANONICAL_ENGINE_VERSIONS = ('2.0.0', '2.1.0')
 _canonical = ContextVar('canonical_planning', default=False)
 
 
@@ -34,9 +36,9 @@ def versioned(planner):
     @wraps(planner)
     def plan(request, **kwargs):
         canonical = isinstance(request, dict) and type(request.get('contract_version')) is int and request['contract_version'] == 2
-        if canonical and kwargs.get('engine_version') not in (None, '2.0.0'):
+        if canonical and kwargs.get('engine_version') not in (None, *CANONICAL_ENGINE_VERSIONS):
             from .planning import PlanningError
-            raise PlanningError('unsupported_version', 'Contract 2 requires engine 2.0.0.', 'engine_version')
+            raise PlanningError('unsupported_version', 'Contract 2 requires engine 2.0.0 or newer.', 'engine_version')
         token = _canonical.set(canonical)
         try:
             result = planner({**request, 'contract_version': 1} if canonical else request, **kwargs)

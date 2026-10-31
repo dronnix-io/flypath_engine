@@ -59,7 +59,7 @@ STRETCH_STEPS = 8
 @versioned
 def plan_oblique(request, *, engine_version=None):
     """Return one deterministic, JSON-compatible oblique planning result."""
-    if engine_version not in (None, "1.4.0", "1.4.1", ENGINE_VERSION):
+    if engine_version not in (None, "1.4.0", "1.4.1", "2.0.0", ENGINE_VERSION):
         raise PlanningError("unsupported_version", "Requested engine version is not available.", "engine_version")
     replay_140 = engine_version == "1.4.0"
     if not isinstance(request, dict):
