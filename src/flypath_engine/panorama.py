@@ -32,7 +32,7 @@ from .measurements import _WGS84, route_distance_m, survey_area_m2
 from .orbit import FINISH_ACTIONS, _flight_record, _recovery, _signed_degrees
 from .planning import (
     CONTRACT_VERSION, ENGINE_VERSION, MAX_ALTITUDE_M, MAX_WAYPOINT_LIMIT, PlanningError,
-    _complete_sum, _ensure_finite_json, _integer, _issue, _keys, _number, _optional_bool,
+    _ensure_finite_json, _integer, _issue, _keys, _number, _optional_bool,
     _position, _validate_area, _version,
 )
 from .precision import number, versioned
@@ -260,12 +260,12 @@ def plan_panorama(request):
         "flights": flights,
         "statistics": {
             "survey_area_m2": 0.0 if survey_area is None else area_m2,
-            "route_distance_m": sum(item["route_distance_m"] for item in flights),
+            "route_distance_m": math.fsum(item["route_distance_m"] for item in flights),
             "outbound_distance_m": None,
-            "recovery_distance_m": _complete_sum(item["recovery_distance_m"] for item in flights),
-            "known_distance_m": sum(item["known_distance_m"] for item in flights),
+            "recovery_distance_m": _exact_complete_sum(item["recovery_distance_m"] for item in flights),
+            "known_distance_m": math.fsum(item["known_distance_m"] for item in flights),
             "total_distance_m": None,
-            "known_estimated_seconds": sum(item["known_estimated_seconds"] for item in flights),
+            "known_estimated_seconds": math.fsum(item["known_estimated_seconds"] for item in flights),
             "total_estimated_seconds": None,
             "photo_count": len(waypoints),
             "photo_count_kind": "actions",
@@ -328,14 +328,22 @@ def _area_points(survey_area, spacing):
     return positions
 
 
+def _exact_complete_sum(values):
+    """The exact sum of the values, or None when any is unknown."""
+    values = list(values)
+    return None if any(value is None for value in values) else math.fsum(values)
+
+
 def _panorama_flight(index, start, end, route):
     """One flight over route waypoints start to end: whole panoramas."""
     waypoints = route["waypoints"]
     actions = [action for action in route["actions"] if start <= action["waypoint_index"] <= end]
     photos = end - start + 1
-    hover_seconds = sum(action["duration_s"] for action in actions if action["type"] == "hover")
+    hover_seconds = math.fsum(action["duration_s"] for action in actions if action["type"] == "hover")
     recovery = _recovery(waypoints[start]["position"], waypoints[end]["position"], route["finish_action"])
-    return _flight_record(index, start, end, actions, sum(route["edges"][start:end]), recovery,
+    # math.fsum, not sum: Python 3.12 made sum() compensate for rounding, so
+    # plain sums differ in the last digits between Python versions.
+    return _flight_record(index, start, end, actions, math.fsum(route["edges"][start:end]), recovery,
                           photos, photos * max(2.5, route["interval"]), hover_seconds, route["common"])
 
 
