@@ -59,7 +59,7 @@ def main():
     registry = importlib.import_module(f'{plugin.name}.hardware').registry
     fixture = Path(__file__).resolve().parents[1] / 'tests/fixtures/reported-mission-126-input.json'
     area = json.loads(fixture.read_text())['survey_area']
-    drone = DroneConfig(code='mini3pro', category='consumer',
+    drone = DroneConfig(code='mini3pro',
                         is_available=True, wpml_verified=True)
     count = 0
     # Only catalogue lookup/policy storage are stubbed. Both real adapters,
