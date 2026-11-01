@@ -3,6 +3,7 @@
 import math
 
 from . import grid
+from .flight_accounting import flight_record, mission_statistics
 from .measurements import route_distance_m, survey_area_m2
 from .profiles import PROFILE_VERSION, drone_profile
 from .precision import versioned
@@ -240,9 +241,6 @@ def plan_2d(request):
         if flight["waypoint_count"] > waypoint_limit:
             blocking.append(_issue("waypoint_limit_exceeded", f"Flight {flight_index + 1} exceeds the waypoint limit."))
 
-    complete = all(flight["estimates_complete"] for flight in flights)
-    total_distance = sum(flight["total_distance_m"] for flight in flights) if complete else None
-    total_seconds = sum(flight["total_estimated_seconds"] for flight in flights) if complete else None
     result = {
         "contract_version": CONTRACT_VERSION,
         "engine_version": ENGINE_VERSION,
@@ -254,22 +252,7 @@ def plan_2d(request):
         "finish_action": finish_action,
         "route": {"waypoints": waypoints, "strips": strips},
         "flights": flights,
-        "statistics": {
-            "survey_area_m2": area,
-            "route_distance_m": sum(f["route_distance_m"] for f in flights),
-            "outbound_distance_m": _complete_sum(f["outbound_distance_m"] for f in flights),
-            "recovery_distance_m": _complete_sum(f["recovery_distance_m"] for f in flights),
-            "known_distance_m": sum(f["known_distance_m"] for f in flights),
-            "total_distance_m": total_distance,
-            "known_estimated_seconds": sum(f["known_estimated_seconds"] for f in flights),
-            "total_estimated_seconds": total_seconds,
-            "photo_count": sum(f["photo_count"] for f in flights),
-            "photo_count_kind": "actions" if capture_mode == "full_auto" else "estimate",
-            "strip_count": len(strips),
-            "waypoint_count": len(points),
-            "battery_count": len(flights),
-            "estimates_complete": complete,
-        },
+        "statistics": mission_statistics(flights, area, len(strips), len(points)),
         "capture": {"mode": capture_mode, "profile_interval_s": interval, "shot_spacing_m": shot_spacing},
         "assumptions": [
             {"code": "straight_segment_estimate", "message": "Distance and time use straight waypoint segments for every turn style."},
@@ -299,11 +282,6 @@ def _route_metadata(points, strips):
         roles[0].add("route_start")
         roles[-1].add("route_end")
     return roles, strips
-
-
-def _complete_sum(values):
-    values = list(values)
-    return sum(values) if all(value is not None for value in values) else None
 
 
 def _edge_distances(points):
@@ -376,11 +354,8 @@ def _flight_result(index, start, end, points, edges, speed, mode, interval, phot
         recovery = _distance(points[end], points[start])
     else:
         recovery = _distance(points[end], home) if recovery_required and home else (0.0 if not recovery_required else None)
-    complete = outbound is not None and recovery is not None
-    known_distance = route_distance + (outbound or 0) + (recovery or 0)
     capture_seconds = (end - start + 1) * photo_allowance if mode == "full_auto" else 0.0
     startup_seconds = 3.0 if mode == "full_auto" else 0.0
-    known_seconds = known_distance / speed + capture_seconds + startup_seconds
     if mode == "full_auto":
         actions = []
         for waypoint_index in range(start, end + 1):
@@ -394,26 +369,8 @@ def _flight_result(index, start, end, points, edges, speed, mode, interval, phot
     else:
         actions = [{"type": "rotate_camera", "waypoint_index": start, "pitch_deg": pitch_deg}]
         photo_count = math.floor((route_distance / speed) / interval)
-    return {
-        "index": index,
-        "route_start_waypoint_index": start,
-        "route_end_waypoint_index": end,
-        "waypoint_count": end - start + 1,
-        "actions": actions,
-        "route_distance_m": route_distance,
-        "outbound_distance_m": outbound,
-        "recovery_distance_m": recovery,
-        "known_distance_m": known_distance,
-        "total_distance_m": known_distance if complete else None,
-        "capture_allowance_seconds": capture_seconds,
-        "startup_wait_seconds": startup_seconds,
-        "known_estimated_seconds": known_seconds,
-        "total_estimated_seconds": known_seconds if complete else None,
-        "usable_battery_seconds": budget,
-        "estimates_complete": complete,
-        "photo_count": photo_count,
-        "photo_count_kind": "actions" if mode == "full_auto" else "estimate",
-    }
+    return flight_record(index, start, end, actions, route_distance, outbound, recovery,
+                         photo_count, capture_seconds, startup_seconds, speed, budget, mode)
 
 
 def _locations(value, requested_flights):

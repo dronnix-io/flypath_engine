@@ -305,7 +305,12 @@ the area's centroid in its UTM zone: rows west to east, each half a spacing
 along from the last, flown back and forth from south to north. Only points
 inside the area are kept; an area too small for a grid point gets one point
 inside it. `point_spacing_m` defaults to `altitude_m`. More than 50 points
-fail as `too_many_points`.
+fail as `too_many_points`. The reported `point_spacing_m` is the requested
+projected grid spacing. If projection or coordinate rounding makes a generated
+grid fail the lap clearance check, the engine retries with slightly wider grid
+spacing, at most twice; grids that already pass keep their original points.
+Each attempt scans at most 10,000 grid candidates; an extent that needs more
+fails as `capacity_exceeded`.
 
 ## Panorama result
 

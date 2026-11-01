@@ -29,7 +29,8 @@ from shapely.geometry import Point
 
 from . import grid
 from .measurements import _WGS84, route_distance_m, survey_area_m2
-from .orbit import FINISH_ACTIONS, _flight_record, _recovery, _signed_degrees
+from .flight_accounting import flight_record, mission_statistics
+from .orbit import FINISH_ACTIONS, _recovery, _signed_degrees
 from .planning import (
     CONTRACT_VERSION, ENGINE_VERSION, MAX_ALTITUDE_M, MAX_WAYPOINT_LIMIT, PlanningError,
     _ensure_finite_json, _integer, _issue, _keys, _number, _optional_bool,
@@ -48,6 +49,7 @@ LAP_GAP_M = 1.0                  # each later row's lap is this much wider
 LAP_CLEARANCE_M = 5.0            # the least gap between the outer laps of two points
 AUTO_SPACING_PER_ALTITUDE = 1.0  # area points: spacing as a multiple of the altitude
 MAX_POINT_SPACING_M = 5_000
+MAX_AREA_GRID_CANDIDATES = 10_000
 SHOT_SETTLE_S = 1.0              # hold still before each photo
 ROW_SETTLE_S = 2.0               # longer where the camera tilts to a new row
 
@@ -140,19 +142,40 @@ def plan_panorama(request):
         try:
             points = _area_points(survey_area, point_spacing)
             area_m2 = survey_area_m2(survey_area)
+        except grid.GridCapacityError as exc:
+            raise PlanningError("capacity_exceeded", str(exc), "survey_area") from None
+        except PlanningError:
+            raise
         except (KeyError, TypeError, ValueError) as exc:
             raise PlanningError("invalid_geometry", str(exc), "survey_area") from None
-        if len(points) > MAX_POINTS:
-            raise PlanningError("too_many_points",
-                                "This area needs %d panorama points at %g m apart, more than %d; raise the "
-                                "point spacing or the altitude." % (len(points), point_spacing, MAX_POINTS),
-                                "point_spacing_m")
-    for index in range(1, len(points)):
-        for other in range(index):
-            if route_distance_m([points[other], points[index]]) < spacing:
-                raise PlanningError("points_too_close",
-                                    "Points %d and %d are closer than %g m, so their laps would overlap."
-                                    % (other + 1, index + 1, spacing), "points[%d]" % index)
+    grid_spacing = point_spacing
+    for attempt in range(3):
+        close_pair = None
+        shortest = math.inf
+        for index in range(1, len(points)):
+            for other in range(index):
+                distance = route_distance_m([points[other], points[index]])
+                if distance < spacing:
+                    close_pair = close_pair or (other, index)
+                    shortest = min(shortest, distance)
+        if close_pair is None:
+            break
+        if survey_area is not None and attempt < 2 and shortest > 0:
+            # The UTM grid and coordinate rounding can shorten ground spacing.
+            grid_spacing *= (spacing + 0.01) / shortest
+            try:
+                points = _area_points(survey_area, grid_spacing)
+            except grid.GridCapacityError as exc:
+                raise PlanningError("capacity_exceeded", str(exc), "survey_area") from None
+            except PlanningError:
+                raise
+            except (KeyError, TypeError, ValueError) as exc:
+                raise PlanningError("invalid_geometry", str(exc), "survey_area") from None
+            continue
+        other, index = close_pair
+        raise PlanningError("points_too_close",
+                            "Points %d and %d are closer than %g m, so their laps would overlap."
+                            % (other + 1, index + 1, spacing), "points[%d]" % index)
 
     waypoints, actions, edges, point_records = [], [], [], []
     for point_index, centre in enumerate(points):
@@ -258,22 +281,8 @@ def plan_panorama(request):
         },
         "route": {"waypoints": waypoints, "strips": strips},
         "flights": flights,
-        "statistics": {
-            "survey_area_m2": 0.0 if survey_area is None else area_m2,
-            "route_distance_m": math.fsum(item["route_distance_m"] for item in flights),
-            "outbound_distance_m": None,
-            "recovery_distance_m": _exact_complete_sum(item["recovery_distance_m"] for item in flights),
-            "known_distance_m": math.fsum(item["known_distance_m"] for item in flights),
-            "total_distance_m": None,
-            "known_estimated_seconds": math.fsum(item["known_estimated_seconds"] for item in flights),
-            "total_estimated_seconds": None,
-            "photo_count": len(waypoints),
-            "photo_count_kind": "actions",
-            "strip_count": len(point_records) * len(rows),
-            "waypoint_count": len(waypoints),
-            "battery_count": len(flights),
-            "estimates_complete": False,
-        },
+        "statistics": mission_statistics(flights, 0.0 if survey_area is None else area_m2,
+                                         len(strips), len(waypoints), math.fsum),
         "capture": {
             "mode": "full_auto",
             "profile_interval_s": interval,
@@ -308,13 +317,26 @@ def _area_points(survey_area, spacing):
     min_x, min_y, max_x, max_y = metric.bounds
     row_step = spacing * math.sqrt(3) / 2
     rows = []
+    accepted = scanned = 0
     for row in range(math.floor((min_y - centre_y) / row_step), math.ceil((max_y - centre_y) / row_step) + 1):
         y = number(centre_y + row * row_step, 3)
         shift = spacing / 2 if row % 2 else 0.0
         columns = range(math.floor((min_x - centre_x - shift) / spacing),
                         math.ceil((max_x - centre_x - shift) / spacing) + 1)
-        found = [(number(centre_x + shift + column * spacing, 3), y) for column in columns]
-        found = [point for point in found if metric.covers(Point(point))]
+        found = []
+        for column in columns:
+            scanned += 1
+            if scanned > MAX_AREA_GRID_CANDIDATES:
+                raise grid.GridCapacityError("Survey extent exceeds the panorama scan capacity.")
+            point = (number(centre_x + shift + column * spacing, 3), y)
+            if metric.covers(Point(point)):
+                found.append(point)
+                accepted += 1
+                if accepted > MAX_POINTS:
+                    raise PlanningError("too_many_points",
+                                        "This area needs more than %d panorama points at %g m apart; raise the "
+                                        "point spacing or the altitude." % (MAX_POINTS, spacing),
+                                        "point_spacing_m")
         if found:
             rows.append(found if len(rows) % 2 == 0 else found[::-1])
     metric_points = [point for row in rows for point in row]
@@ -328,12 +350,6 @@ def _area_points(survey_area, spacing):
     return positions
 
 
-def _exact_complete_sum(values):
-    """The exact sum of the values, or None when any is unknown."""
-    values = list(values)
-    return None if any(value is None for value in values) else math.fsum(values)
-
-
 def _panorama_flight(index, start, end, route):
     """One flight over route waypoints start to end: whole panoramas."""
     waypoints = route["waypoints"]
@@ -343,8 +359,10 @@ def _panorama_flight(index, start, end, route):
     recovery = _recovery(waypoints[start]["position"], waypoints[end]["position"], route["finish_action"])
     # math.fsum, not sum: Python 3.12 made sum() compensate for rounding, so
     # plain sums differ in the last digits between Python versions.
-    return _flight_record(index, start, end, actions, math.fsum(route["edges"][start:end]), recovery,
-                          photos, photos * max(2.5, route["interval"]), hover_seconds, route["common"])
+    common = route["common"]
+    return flight_record(index, start, end, actions, math.fsum(route["edges"][start:end]), None,
+                         recovery, photos, photos * max(2.5, route["interval"]), hover_seconds,
+                         common["speed"], common["usable_seconds"], common["mode"])
 
 
 def _rows(horizontal_fov, vertical_fov, overlap, include_nadir):

@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from flypath_engine import PlanningError, plan_panorama  # noqa: E402
+from flypath_engine import panorama  # noqa: E402
 
 GEOD = Geod(ellps="WGS84")
 CENTRE = {"latitude_deg": 51.05, "longitude_deg": -114.09}
@@ -228,6 +229,56 @@ def test_area_spacing_follows_the_request_and_small_areas_get_one_point():
     assert len(single) == 1
     centre = single[0]["centre"]
     assert 51.05 <= centre["latitude_deg"] <= 51.055 and -114.09 <= centre["longitude_deg"] <= -114.08
+
+
+def test_dense_area_stops_after_51_accepted_points(monkeypatch):
+    examined = 0
+    original = panorama.Point
+
+    def counted_point(*args):
+        nonlocal examined
+        examined += 1
+        return original(*args)
+
+    monkeypatch.setattr(panorama, "Point", counted_point)
+    with pytest.raises(PlanningError) as error:
+        plan_panorama(_area_request(point_spacing_m=30))
+    assert error.value.code == "too_many_points"
+    assert examined < 200
+
+
+def test_sparse_area_scan_is_bounded(monkeypatch):
+    class SparseMetric:
+        bounds = (0, 0, 1_000_000, 1_000_000)
+        centroid = panorama.Point(500_000, 500_000)
+        examined = 0
+
+        def covers(self, _point):
+            self.examined += 1
+            assert self.examined <= 10_001, "scan did not stop at capacity"
+            return False
+
+    monkeypatch.setattr(panorama.grid, "_metric_polygon", lambda _area: (SparseMetric(), None))
+    with pytest.raises(PlanningError) as error:
+        plan_panorama(_area_request(point_spacing_m=30))
+    assert error.value.code == "capacity_exceeded"
+
+
+@pytest.mark.parametrize("contract_version", [1, 2])
+def test_area_grid_recovers_from_projection_clearance_shortfall(contract_version):
+    area = {"exterior": [
+        {"latitude_deg": 51, "longitude_deg": -114.09},
+        {"latitude_deg": 51, "longitude_deg": -114.0895},
+        {"latitude_deg": 51.0005, "longitude_deg": -114.0895},
+        {"latitude_deg": 51.0005, "longitude_deg": -114.09},
+    ], "holes": []}
+    result = plan_panorama(_area_request(contract_version=contract_version, survey_area=area, altitude_m=60, speed_m_s=2,
+                                          point_spacing_m=15))
+    points = [record["centre"] for record in result["panorama"]["points"]]
+    assert len(points) > 1
+    assert result["panorama"]["point_spacing_m"] == 15
+    assert min(_metres(first, second) for index, first in enumerate(points)
+               for second in points[:index]) >= result["panorama"]["min_point_spacing_m"]
 
 
 @pytest.mark.parametrize("change,code", [
