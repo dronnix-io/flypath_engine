@@ -11,7 +11,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'src'))
 
-from flypath_engine import plan_2d, plan_oblique, plan_orbit, PlanningError
+from flypath_engine import plan_2d, plan_oblique, plan_orbit, plan_panorama, PlanningError
 
 
 def requests():
@@ -75,9 +75,37 @@ def requests():
         r['capture'] = {'mode': mode, **({'side_overlap_ratio': .8} if mode == 'full_auto' else {})}
         r['split'] = {'enabled': True, 'requested_flights': 3, 'max_waypoints_per_flight': 30}
         yield 'rings-' + mode, r
+    rng = random.Random(29)
+    for index in range(12):
+        latitude, longitude = rng.uniform(-65, 65), rng.uniform(-170, 170)
+        yield f'panorama-{index}', {
+            'contract_version': 2, 'profile_version': 1, 'operation': 'plan_panorama',
+            'mapping_style': 'panorama', 'drone_profile_id': ('mini4pro', 'air3', 'mavic4pro')[index % 3],
+            'points': [{'latitude_deg': latitude + .0003 * step, 'longitude_deg': longitude}
+                       for step in range(1 + index % 3)],
+            'altitude_m': rng.uniform(20, 120), 'speed_m_s': 2., 'include_nadir': bool(index % 4),
+            'split': {'max_waypoints_per_flight': (200, 40)[index % 2]},
+            'capture': {'mode': 'full_auto', 'overlap_ratio': rng.uniform(.2, .7)},
+            'finish_action': 'return_to_home',
+        }
+    rng = random.Random(31)
+    for index in range(8):
+        latitude, longitude = rng.uniform(-65, 65), rng.uniform(-170, 170)
+        yield f'panorama-area-{index}', {
+            'contract_version': 2, 'profile_version': 1, 'operation': 'plan_panorama',
+            'mapping_style': 'panorama', 'drone_profile_id': 'mini4pro',
+            'survey_area': {'exterior': [
+                {'latitude_deg': latitude + dy, 'longitude_deg': longitude + dx}
+                for dx, dy in ((0, 0), (.006, 0), (.006, .004), (0, .004))], 'holes': []},
+            **({'point_spacing_m': rng.uniform(120, 300)} if index % 2 else {}),
+            'altitude_m': rng.uniform(150, 300), 'speed_m_s': 8.,
+            'capture': {'mode': 'full_auto', 'overlap_ratio': .3},
+            'finish_action': 'return_to_home',
+        }
 
 
-PLANNERS = {'plan_2d': plan_2d, 'plan_orbit': plan_orbit, 'plan_oblique': plan_oblique}
+PLANNERS = {'plan_2d': plan_2d, 'plan_orbit': plan_orbit, 'plan_oblique': plan_oblique,
+            'plan_panorama': plan_panorama}
 
 
 def fingerprint(result):

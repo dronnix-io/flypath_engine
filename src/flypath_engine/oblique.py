@@ -31,10 +31,11 @@ from shapely.geometry import Polygon
 from shapely.ops import unary_union
 
 from . import grid
+from .flight_accounting import mission_statistics
 from .measurements import _WGS84, survey_area_m2
 from .planning import (
     CONTRACT_VERSION, DIRECTION_CONVENTION, ENGINE_VERSION, MAX_ALTITUDE_M, MAX_MARGIN_M,
-    MAX_ROUTE_WAYPOINTS, MAX_WAYPOINT_LIMIT, PlanningError, _balanced_boundaries, _complete_sum,
+    MAX_ROUTE_WAYPOINTS, MAX_WAYPOINT_LIMIT, PlanningError, _balanced_boundaries,
     _edge_distances, _ensure_finite_json, _flight_location, _flight_result, _integer, _issue, _keys,
     _locations, _number, _route_metadata, _validate_area, _version,
 )
@@ -59,7 +60,7 @@ STRETCH_STEPS = 8
 @versioned
 def plan_oblique(request, *, engine_version=None):
     """Return one deterministic, JSON-compatible oblique planning result."""
-    if engine_version not in (None, "1.4.0", "1.4.1", ENGINE_VERSION):
+    if engine_version not in (None, "1.4.0", "1.4.1", "2.0.0", ENGINE_VERSION):
         raise PlanningError("unsupported_version", "Requested engine version is not available.", "engine_version")
     replay_140 = engine_version == "1.4.0"
     if not isinstance(request, dict):
@@ -238,7 +239,6 @@ def plan_oblique(request, *, engine_version=None):
                 blocking.append(_issue("battery_time_exceeded",
                                        f"Flight {number} exceeds the usable battery-time limit."))
 
-    complete = all(flight["estimates_complete"] for flight in flights)
     result = {
         "contract_version": CONTRACT_VERSION,
         "engine_version": "1.4.0" if replay_140 else ENGINE_VERSION,
@@ -261,22 +261,7 @@ def plan_oblique(request, *, engine_version=None):
         },
         "route": {"waypoints": waypoints, "strips": strips},
         "flights": flights,
-        "statistics": {
-            "survey_area_m2": area,
-            "route_distance_m": sum(f["route_distance_m"] for f in flights),
-            "outbound_distance_m": _complete_sum(f["outbound_distance_m"] for f in flights),
-            "recovery_distance_m": _complete_sum(f["recovery_distance_m"] for f in flights),
-            "known_distance_m": sum(f["known_distance_m"] for f in flights),
-            "total_distance_m": sum(f["total_distance_m"] for f in flights) if complete else None,
-            "known_estimated_seconds": sum(f["known_estimated_seconds"] for f in flights),
-            "total_estimated_seconds": sum(f["total_estimated_seconds"] for f in flights) if complete else None,
-            "photo_count": sum(f["photo_count"] for f in flights),
-            "photo_count_kind": "actions" if mode == "full_auto" else "estimate",
-            "strip_count": len(strips),
-            "waypoint_count": len(points),
-            "battery_count": len(flights),
-            "estimates_complete": complete,
-        },
+        "statistics": mission_statistics(flights, area, len(strips), len(points)),
         "capture": {
             "mode": mode,
             "profile_interval_s": interval,

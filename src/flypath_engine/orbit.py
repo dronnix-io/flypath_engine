@@ -16,10 +16,11 @@ without ``rings`` and without splitting keeps the v1.2.0 result shape.
 import itertools
 import math
 
+from .flight_accounting import flight_record, mission_statistics
 from .measurements import _WGS84, route_distance_m
 from .planning import (
     CONTRACT_VERSION, ENGINE_VERSION, MAX_ALTITUDE_M, MAX_WAYPOINT_LIMIT, PlanningError,
-    _balanced_boundaries, _complete_sum, _ensure_finite_json, _integer, _issue, _keys, _number,
+    _balanced_boundaries, _ensure_finite_json, _integer, _issue, _keys, _number,
     _position, _version,
 )
 from .profiles import PROFILE_VERSION, drone_profile
@@ -227,39 +228,12 @@ def _recovery(first, last, finish_action, height_change=0.0):
     return 0.0
 
 
-def _flight_record(index, start, end, actions, route_distance, recovery, photo_count,
-                   capture_seconds, startup_seconds, common):
-    """One flight over route waypoints start to end, inclusive."""
-    known_distance = route_distance + (recovery or 0)
-    known_seconds = known_distance / common["speed"] + capture_seconds + startup_seconds
-    full_auto = common["mode"] == "full_auto"
-    return {
-        "index": index,
-        "route_start_waypoint_index": start,
-        "route_end_waypoint_index": end,
-        "waypoint_count": end - start + 1,
-        "actions": actions,
-        "route_distance_m": route_distance,
-        "outbound_distance_m": None,
-        "recovery_distance_m": recovery,
-        "known_distance_m": known_distance,
-        "total_distance_m": None,
-        "capture_allowance_seconds": capture_seconds,
-        "startup_wait_seconds": startup_seconds,
-        "known_estimated_seconds": known_seconds,
-        "total_estimated_seconds": None,
-        "usable_battery_seconds": common["usable_seconds"],
-        "estimates_complete": False,
-        "photo_count": photo_count,
-        "photo_count_kind": "actions" if full_auto else "estimate",
-    }
-
-
 def _flight_and_checks(points, actions, route_distance, recovery, photo_count, capture_seconds,
                        startup_seconds, common):
     """The single-ring flight record and its blocking checks (v1.2.0)."""
-    flight = _flight_record(0, 0, len(points) - 1, actions, route_distance, recovery, photo_count,
-                            capture_seconds, startup_seconds, common)
+    flight = flight_record(0, 0, len(points) - 1, actions, route_distance, None, recovery,
+                           photo_count, capture_seconds, startup_seconds, common["speed"],
+                           common["usable_seconds"], common["mode"])
     known_seconds = flight["known_estimated_seconds"]
     blocking = []
     if len(points) > common["waypoint_limit"]:
@@ -284,22 +258,7 @@ def _result(common, orbit, waypoints, strips, flights, blocking, survey_area, ca
         "orbit": orbit,
         "route": {"waypoints": waypoints, "strips": strips},
         "flights": flights,
-        "statistics": {
-            "survey_area_m2": survey_area,
-            "route_distance_m": sum(flight["route_distance_m"] for flight in flights),
-            "outbound_distance_m": None,
-            "recovery_distance_m": _complete_sum(flight["recovery_distance_m"] for flight in flights),
-            "known_distance_m": sum(flight["known_distance_m"] for flight in flights),
-            "total_distance_m": None,
-            "known_estimated_seconds": sum(flight["known_estimated_seconds"] for flight in flights),
-            "total_estimated_seconds": None,
-            "photo_count": sum(flight["photo_count"] for flight in flights),
-            "photo_count_kind": flights[0]["photo_count_kind"],
-            "strip_count": len(strips),
-            "waypoint_count": len(waypoints),
-            "battery_count": len(flights),
-            "estimates_complete": False,
-        },
+        "statistics": mission_statistics(flights, survey_area, len(strips), len(waypoints)),
         "capture": capture,
         "assumptions": [
             {"code": "centre_at_takeoff_level", "message": "Overlap uses the slant distance to the centre at takeoff ground level."},
@@ -473,8 +432,9 @@ def _ring_flight(index, start, end, route, common):
     else:
         photo_count = math.floor(route_distance / route["shot_spacing"]) + 1
         capture_seconds = startup_seconds = 0.0
-    return _flight_record(index, start, end, actions, route_distance, recovery, photo_count,
-                          capture_seconds, startup_seconds, common)
+    return flight_record(index, start, end, actions, route_distance, None, recovery,
+                         photo_count, capture_seconds, startup_seconds, common["speed"],
+                         common["usable_seconds"], common["mode"])
 
 
 def _split_boundaries(strips, route, common):
