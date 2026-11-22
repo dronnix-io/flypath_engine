@@ -289,6 +289,9 @@ def test_fast_140_replay_matches_frozen_result():
     current = plan_oblique(request)
     assert current["engine_version"] == "2.2.0"
     assert current["contract_version"] == expected["contract_version"] == 1
+    # Results saved by each earlier contract release still replay.
+    for version in ("1.4.1", "2.0.0", "2.1.0"):
+        assert plan_oblique(request, engine_version=version)["route"] == current["route"]
     for version in ("1.3.0", "", 1, []):
         with pytest.raises(PlanningError) as error:
             plan_oblique(request, engine_version=version)
