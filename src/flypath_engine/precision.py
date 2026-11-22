@@ -9,7 +9,7 @@ from shapely import set_precision
 
 CANONICAL_CONTRACT_VERSION = 2
 # Engine releases that plan contract 2; saved results replay with the newest.
-CANONICAL_ENGINE_VERSIONS = ('2.0.0', '2.1.0')
+CANONICAL_ENGINE_VERSIONS = ('2.0.0', '2.1.0', '2.2.0')
 _canonical = ContextVar('canonical_planning', default=False)
 
 

@@ -29,6 +29,13 @@ def test_shared_drone_profiles():
     assert lito["camera"]["focal_length_mm"] == 6.7
     assert (lito["camera"]["image_width_px"], lito["camera"]["image_height_px"]) == (4032, 3024)
 
+    # The Mavic 3 Pro maps with its 4/3 Hasselblad camera, as on the Mavic 3 Classic.
+    name, mavic3pro = drone_profile("mavic3pro")
+    assert name == "DJI Mavic 3 Pro"
+    assert mavic3pro["category"] == "consumer" and mavic3pro["aircraft"]["drone_enum"] == 68
+    assert mavic3pro["camera"] == drone_profile("mavic3classic")[1]["camera"]
+    assert (mavic3pro["aircraft"]["battery_time_min"], mavic3pro["aircraft"]["signal_range_km"]) == (43, 15.0)
+
     profiles["DJI Mini 3 Pro"]["camera"]["focal_length_mm"] = -1
     assert drone_profile("mini3pro")[1]["camera"]["focal_length_mm"] == 6.9
 

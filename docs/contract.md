@@ -276,6 +276,13 @@ The result uses the `plan_2d` shape with these differences:
 Without splitting, a pass above the waypoint limit or one battery returns
 `splitting_required_waypoint_limit` or `splitting_required_battery_limit`.
 
+## Engine v2.2.0
+
+Engine release `v2.2.0` adds the DJI Mavic 3 Pro drone profile
+(`drone_profile_id: "mavic3pro"`). Planning, the contract and
+`profile_version` are unchanged; contract 2 results from v2.0.0 and v2.1.0
+replay as before.
+
 ## Panorama request
 
 Engine release `v2.1.0` adds `plan_panorama(request)`: photos all around one or
