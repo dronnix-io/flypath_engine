@@ -10,7 +10,7 @@ from .precision import versioned
 
 
 CONTRACT_VERSION = 1
-ENGINE_VERSION = "2.2.0"
+ENGINE_VERSION = "2.3.0"
 DIRECTION_CONVENTION = "plugin_grid_ccw_from_north"
 MAX_WAYPOINT_LIMIT = 200
 MAX_ROUTE_WAYPOINTS = 40 * (MAX_WAYPOINT_LIMIT - 1) + 1
@@ -298,16 +298,19 @@ def _balanced_boundaries(points, edges, count, limit, speed, mode, photo_allowan
     location_costs = []
     first_waypoint_recovery = {}
     for flight_index in range(count):
+        if flight_index and locations and locations[0] == "shared":
+            location_costs.append(location_costs[0])
+            continue
         location = _flight_location(locations, flight_index)
         outbound = [_distance(location["launch"], point) / speed
                     for point in points] if location.get("launch") else [0.0] * n
         recovery = ([_distance(point, location["home"]) / speed for point in points]
                     if finish_action == "return_to_home" and location.get("home") else [0.0] * n)
         location_costs.append((outbound, recovery))
-    current = {0: (0.0, [])}
+    current = {0: (0.0, None)}
     for used in range(count):
         following = {}
-        for start, (worst, boundaries) in current.items():
+        for start, (worst, path) in current.items():
             remaining_groups = count - used - 1
             min_end = start if n == 1 else max(
                 start + 1,
@@ -327,13 +330,84 @@ def _balanced_boundaries(points, edges, count, limit, speed, mode, photo_allowan
                     seconds += first_waypoint_recovery[pair]
                 if seconds > budget:
                     continue
-                value = (max(worst, seconds), boundaries + [(start, end)])
-                if end not in following or value[0] < following[end][0] - 1e-9:
-                    following[end] = value
+                longest = max(worst, seconds)
+                if end not in following or longest < following[end][0] - 1e-9:
+                    following[end] = (longest, (start, end, path))
         current = following
         if not current:
             return None
-    return current.get(n - 1, (None, None))[1]
+    path = current.get(n - 1, (None, None))[1]
+    if path is None:
+        return None
+    boundaries = []
+    while path is not None:
+        start, end, path = path
+        boundaries.append((start, end))
+    return boundaries[::-1]
+
+
+def _balanced_boundaries_solver(points, edges, limit, speed, mode, photo_allowance,
+                                budget, finish_action, locations):
+    """Reuse balanced partition states when a caller asks for successive flight counts."""
+    n = len(points)
+    prefix = [0.0]
+    for distance in edges:
+        prefix.append(prefix[-1] + distance)
+    current = {0: (0.0, None)}
+    solutions = [None]
+    first_waypoint_recovery = {}
+    shared_costs = None
+
+    def solve(count):
+        nonlocal current, shared_costs
+        if count < 1 or count > max(1, n - 1):
+            return None
+        while len(solutions) <= count:
+            used = len(solutions) - 1
+            if not current:
+                solutions.append(None)
+                continue
+            if used and locations and locations[0] == "shared":
+                outbound, recovery = shared_costs
+            else:
+                location = _flight_location(locations, used)
+                outbound = ([_distance(location["launch"], point) / speed for point in points]
+                            if location.get("launch") else [0.0] * n)
+                recovery = ([_distance(point, location["home"]) / speed for point in points]
+                            if finish_action == "return_to_home" and location.get("home") else [0.0] * n)
+                if locations and locations[0] == "shared":
+                    shared_costs = outbound, recovery
+            following = {}
+            for start, (worst, path) in current.items():
+                min_end = start if n == 1 else start + 1
+                max_end = min(n - 1, start + limit - 1)
+                for end in range(min_end, max_end + 1):
+                    seconds = (prefix[end] - prefix[start]) / speed
+                    if mode == "full_auto":
+                        seconds += (end - start + 1) * photo_allowance + 3
+                    seconds += outbound[start] + recovery[end]
+                    if finish_action == "return_to_first_waypoint":
+                        pair = (start, end)
+                        if pair not in first_waypoint_recovery:
+                            first_waypoint_recovery[pair] = _distance(points[end], points[start]) / speed
+                        seconds += first_waypoint_recovery[pair]
+                    if seconds > budget:
+                        continue
+                    longest = max(worst, seconds)
+                    if end not in following or longest < following[end][0] - 1e-9:
+                        following[end] = (longest, (start, end, path))
+            current = following
+            solutions.append(current.get(n - 1, (None, None))[1])
+        path = solutions[count]
+        if path is None:
+            return None
+        boundaries = []
+        while path is not None:
+            start, end, path = path
+            boundaries.append((start, end))
+        return boundaries[::-1]
+
+    return solve
 
 
 def _segment_seconds(edges, start, end, speed, mode, photo_allowance):

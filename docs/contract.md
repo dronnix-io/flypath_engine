@@ -283,6 +283,55 @@ Engine release `v2.2.0` adds the DJI Mavic 3 Pro drone profile
 `profile_version` are unchanged; contract 2 results from v2.0.0 and v2.1.0
 replay as before.
 
+## Corridor request (engine 2.3.0, contract 2)
+
+`plan_corridor(request)` is an additive operation under contract 2 only. The
+request uses `operation: "plan_corridor"`, `mapping_style: "corridor"`, and an
+open, simple `centre_line` of 2 to 500 position objects in flight order.
+`width_m` is the full corridor width (positive, at most 5,000 m). Other fields
+are `drone_profile_id`, `profile_version`, `altitude_m`, `speed_m_s`,
+`side_overlap_ratio`, `capture`, `turn_style`, `finish_action`, and `split` with
+the same names and values as 2D planning. Optional `reverse_route` reverses
+the entire generated route before splitting. Optional ascending, unique
+`break_indices` name interior centre-line vertices where a new hard flight
+group begins. Split flights never cross a hard group boundary. `locations`
+supports shared launch/home only; per-flight locations fail explicitly.
+
+Passes are offsets from the centre line, ordered from right to left relative
+to its input direction. The outermost pass centre is at most half a photo
+footprint inside each corridor edge; passes between them are equally spaced
+and no farther apart than the requested side-overlap spacing. Adjacent passes
+snake, starting in the input direction. At bends, the edge inset can shrink
+to respect the camera's along-track footprint. Offsets follow the complete
+centre line before hard groups are cut; ambiguous offset cuts fail. Straight
+connectors between passes belong to the route. A disconnected or
+self-intersecting offset fails rather
+than silently losing coverage. Full-auto places a photo at every route
+waypoint, including bends and connectors; semi-auto retains bends and estimates
+interval photos by flight. The result uses the 2D route, flights, capture,
+statistics, assumptions, warnings, and validation shapes, plus `operation`,
+`mapping_style`, and `corridor: {width_m, pass_offsets_m, break_indices}`.
+`statistics.survey_area_m2` measures the projected corridor band on WGS84.
+At most 40 flights and 2,000 route or terrain lookup sample waypoints are
+accepted, matching the common consumer mission limit. Other operations retain
+their own capacity limits.
+
+Terrain following uses a two-stage, offline-replayable input. Add
+`terrain_follow: {tolerance_m}` (positive, at most 100 m) and call
+`corridor_sample_points(request)` to obtain the deterministic ordered position
+list for elevation lookup. Then supply
+`terrain_follow.elevations_m`, one finite ground elevation for each sample.
+`plan_corridor` fails if any elevation is missing. Semi-auto samples all route
+legs, including pass connectors, at intervals between 8 and 30 m, retains all
+original bends, and adds points when ground elevation differs from the last
+retained sample by more than `tolerance_m`. Full-auto samples its existing photo
+waypoints without changing them. Terrain waypoints include
+`ground_elevation_m`; the complete request can replay without an elevation
+service. Consumers derive their relative altitude for export from these
+elevations and the selected launch-ground elevation. The engine does no
+network or elevation lookup. Capacity limits reject excessive sample and
+waypoint counts.
+
 ## Panorama request
 
 Engine release `v2.1.0` adds `plan_panorama(request)`: photos all around one or
@@ -349,7 +398,8 @@ flies small laps, facing outward, with one photo per heading:
 
 ## Ownership
 
-The shared Python core owns coordinate normalization, direction, 2D, oblique and orbit route generation, ordering,
+The shared Python core owns coordinate normalization, direction, 2D, Corridor,
+Oblique, Orbit and Panorama route generation, ordering,
 splitting, photo actions, geographic measurements, estimates, and planning
 warnings.
 

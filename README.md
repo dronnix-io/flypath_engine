@@ -13,6 +13,9 @@ pass plus four grid passes with a tilted camera, one facing each side.
 Release `v1.4.1` handles narrow survey grids and continuously sweeps Fast oblique
 passes. It keeps contract version 1 and accepts `plan_oblique(request,
 engine_version="1.4.0")` when verifying a saved result made by v1.4.0.
+Release `v2.3.0` adds contract-2 `plan_corridor(request)` and the deterministic
+`corridor_sample_points(request)` terrain lookup helper. See the
+[contract](docs/contract.md) for the request and replay rules.
 The lower-level geometry, measurement, statistics, split-helper, and profile APIs remain
 available.
 
@@ -32,6 +35,7 @@ python tests/test_measurements.py
 python tests/test_statistics.py
 python tests/test_profiles.py
 python tests/test_planning.py
+python -m pytest -q tests/test_corridor.py
 ```
 
 With the website virtual environment, compare both local adapters and their

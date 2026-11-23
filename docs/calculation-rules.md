@@ -68,3 +68,36 @@ camera rotation and startup hover. Semi-auto uses the profile capture interval
 and reports estimated photo count and achieved side overlap. The overlap model
 uses image width at the slant distance to the centre at takeoff ground level;
 this assumption is returned in the result. Rings are not split automatically.
+
+## Corridor planning (contract 2)
+
+The full corridor width includes half a photo footprint beyond the first and
+last pass centres. Pass spacing is the footprint width times one minus side
+overlap, with a 0.5 m minimum. Offset curves use the local UTM projection,
+millimetre geometry precision, and a miter limit of 2. The corridor band area
+is measured on the WGS84 ellipsoid after creating the projected width buffer.
+Passes snake across the band, keeping every bend and straight connector.
+At bends, the outer pass moves toward the edge when the camera's along-track
+footprint is shorter than its cross-track footprint. Its maximum edge inset
+is the smaller of half the cross-track footprint and half the along-track
+footprint times the tangent of half the bend's interior angle. For semi-auto,
+the along-track reach also reserves half the capture interval distance for
+the worst photo phase; an interval longer than the along-track footprint
+fails at a bend. Each offset follows the complete centre line; hard breaks cut
+that offset at the bend and
+retain the cut point in both groups. Ambiguous cuts fail.
+
+Full-auto photo positions are no farther apart than the footprint height
+times one minus front overlap, with a 0.5 m minimum. The engine retains bend
+vertices and places an action at every waypoint. Semi-auto reports the same
+route-time interval-photo estimate as `plan_2d`; a curved flight may depart
+from these straight waypoint segments, so the estimated footprint does not
+guarantee a photo exactly at the geometric bend. Splits use the shared balanced
+time partition within each hard group. When extra flights are requested, the
+engine adds one to the group with the longest current known estimated flight
+time, including photo actions and known launch/recovery travel. Explicit centre-line breaks create
+separate flight groups, so the edge between groups is not flown or counted in
+any flight. Terrain samples are part of the request and never fetched by the
+engine. Semi-auto samples every leg and retains terrain points when ground
+height differs from the last retained sample by more than the requested
+tolerance; full-auto keeps its photo waypoints unchanged.

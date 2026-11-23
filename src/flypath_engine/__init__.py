@@ -1,11 +1,12 @@
 """Pure Python mission-planning core shared by FlyPath products."""
 
-__version__ = "2.2.0"
+__version__ = "2.3.0"
 
 from .planning import PlanningError, plan_2d
 from .oblique import plan_oblique
 from .orbit import plan_orbit
 from .panorama import plan_panorama
+from .corridor import plan_corridor, corridor_sample_points
 from .route import boustrophedon_route, split_by_waypoint_count, split_waypoints
 
 __all__ = (
@@ -16,6 +17,8 @@ __all__ = (
     "plan_oblique",
     "plan_orbit",
     "plan_panorama",
+    "plan_corridor",
+    "corridor_sample_points",
     "split_by_waypoint_count",
     "split_waypoints",
 )
