@@ -1,5 +1,20 @@
 # Shared planning integration status
 
+## 2.3.0 Corridor integration
+
+Both consumers now adapt `plan_corridor` for new routes, including capture,
+terrain refinement from saved samples, manual breaks and flight splitting.
+Legacy saved Corridor routes remain on their existing path until explicit
+regeneration. The common contract limits routes and terrain lookup samples to
+2,000 positions and flights to 40. Multipart centre lines and per-flight
+launch/home locations are rejected explicitly; shared locations are supported.
+
+Both consumers must pin the same immutable 2.3.0 engine commit before merging
+their integration changes. Merge the engine first, then the consumers; publishing
+a development branch does not constitute a production deployment or release tag.
+The parity tool covers 96 Corridor export combinations and 12 existing adapter
+cases. Historical notes below describe earlier releases.
+
 Release `v0.4.0`, contract version 1, adds the versioned `plan_2d`
 boundary for 2D routes, time-balanced flight splitting, explicit capture
 actions, profile-owned limits, known and complete estimates, warnings, and
@@ -38,7 +53,8 @@ versioned oblique entry point when verifying their original route.
 - Saved routes remain unchanged until explicit regeneration.
 - Preview, statistics, splitting, and supported exports consume one planning
   result per generated route.
-- Terrain and corridor planning remain consumer-owned legacy paths.
+- New Corridor routes use the shared engine, including supplied terrain samples;
+  saved legacy routes retain their consumer-owned replay paths.
 
 ## Verification
 
@@ -62,4 +78,4 @@ coverage, controller validation, or flight testing on supported aircraft.
 3. Mission sync rejects polygon holes and multipart areas until the public sync
    contract can represent them losslessly.
 4. Launch/home coordinates are supported by the engine contract; picker UI,
-   terrain/corridor migration, and controller delivery remain later phases.
+   and controller delivery remain later phases.

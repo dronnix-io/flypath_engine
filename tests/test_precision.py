@@ -109,7 +109,10 @@ PLANNERS = {'plan_2d': plan_2d, 'plan_orbit': plan_orbit, 'plan_oblique': plan_o
 
 
 def fingerprint(result):
-    return hashlib.sha256(json.dumps(result, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+    # Existing operation fixtures record engine 2.2.0 behavior. A new release
+    # changes provenance only; retain the exact old calculations as the gate.
+    normalized = {**result, 'engine_version': '2.2.0'}
+    return hashlib.sha256(json.dumps(normalized, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
 
 
 def test_platform_fingerprints():

@@ -44,7 +44,7 @@ def _rows(result, point=0):
 def test_sphere_rows_from_horizon_to_nadir():
     result = plan_panorama(_request())
     assert result["operation"] == "plan_panorama" and result["mapping_style"] == "panorama"
-    assert result["engine_version"] == "2.2.0" and result["contract_version"] == 2
+    assert result["engine_version"] == "2.3.0" and result["contract_version"] == 2
     assert _rows(result) == [(0.0, 8, 3.0), (-30.0, 8, 4.0), (-60.0, 7, 5.0), (-90.0, 1, 0.0)]
     assert result["statistics"]["photo_count"] == result["statistics"]["waypoint_count"] == 24
     assert result["statistics"]["photo_count_kind"] == "actions"

@@ -2,6 +2,7 @@
 
 from contextvars import ContextVar
 from functools import wraps
+from contextlib import contextmanager
 
 from pyproj import Geod, Transformer
 from shapely import set_precision
@@ -9,8 +10,18 @@ from shapely import set_precision
 
 CANONICAL_CONTRACT_VERSION = 2
 # Engine releases that plan contract 2; saved results replay with the newest.
-CANONICAL_ENGINE_VERSIONS = ('2.0.0', '2.1.0', '2.2.0')
+CANONICAL_ENGINE_VERSIONS = ('2.0.0', '2.1.0', '2.2.0', '2.3.0')
 _canonical = ContextVar('canonical_planning', default=False)
+
+
+@contextmanager
+def canonical_planning():
+    """Apply contract-2 precision to a new operation without rewriting its request."""
+    token = _canonical.set(True)
+    try:
+        yield
+    finally:
+        _canonical.reset(token)
 
 
 def number(value, places=6):
